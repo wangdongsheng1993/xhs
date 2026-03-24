@@ -1,6 +1,7 @@
 import math
 import os
 import re
+import shutil
 import sys
 import time
 import urllib.request
@@ -87,6 +88,108 @@ REFERENCE_CASE_KEYWORDS = [
     "minij",
 ]
 
+CONTENT_STYLE_KEYWORDS = {
+    "家装改造": [
+        "改造",
+        "爆改",
+        "翻新",
+        "装修前后",
+        "旧房改造",
+        "局改",
+        "改造前",
+        "改造后",
+        "焕新",
+        "入住改造",
+    ],
+    "家装测评": [
+        "测评",
+        "评测",
+        "开箱",
+        "体验",
+        "实测",
+        "对比",
+        "横评",
+        "到底怎么选",
+        "值不值",
+        "好不好用",
+        "推荐买吗",
+        "使用感受",
+    ],
+    "干货分享": [
+        "攻略",
+        "避坑",
+        "清单",
+        "干货",
+        "经验",
+        "合集",
+        "教程",
+        "指南",
+        "技巧",
+        "怎么选",
+        "如何选",
+        "尺寸",
+        "布局",
+        "注意事项",
+    ],
+    "话题类": [
+        "vlog",
+        "日常",
+        "记录",
+        "聊天",
+        "唠唠",
+        "问答",
+        "q&a",
+        "你们",
+        "大家都",
+        "谁懂",
+        "有没有人",
+        "话题",
+        "讨论",
+    ],
+    "家居美学": [
+        "家居",
+        "软装",
+        "设计",
+        "氛围",
+        "奶油",
+        "中古",
+        "极简",
+        "原木",
+        "法式",
+        "ins",
+        "审美",
+        "布置",
+        "晒家",
+        "我的家",
+        "客厅",
+        "卧室",
+        "餐厅",
+    ],
+}
+
+HOME_PRODUCT_KEYWORDS = [
+    "冰箱",
+    "洗衣机",
+    "洗烘",
+    "烘干机",
+    "空调",
+    "电视",
+    "热水器",
+    "油烟机",
+    "洗碗机",
+    "蒸烤箱",
+    "蒸箱",
+    "烤箱",
+    "灶",
+    "厨电",
+    "燃气灶",
+    "集成灶",
+    "净水器",
+    "扫地机",
+    "洗地机",
+    "吸尘器",
+]
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
@@ -122,6 +225,15 @@ def sanitize_filename(text):
 
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
+
+
+def cleanup_dir(path):
+    if not path:
+        return
+    try:
+        shutil.rmtree(path, ignore_errors=True)
+    except Exception:
+        pass
 
 
 def header_map(ws):
@@ -266,6 +378,73 @@ def infer_kol_content_type(notes, blogger_data):
     if blogger_data.get("pictureState") == 1:
         return "图文"
     return ""
+
+
+def build_note_text(note):
+    """把笔记里可能出现的文本字段拼成统一文本，便于做关键词判断。"""
+    parts = []
+    for key in [
+        "title",
+        "brandName",
+        "desc",
+        "description",
+        "content",
+        "noteTypeName",
+        "categoryName",
+        "subCategoryName",
+    ]:
+        value = note.get(key)
+        if value:
+            parts.append(str(value))
+
+    for key in ["tagNameList", "tags", "topicNames"]:
+        values = note.get(key)
+        if isinstance(values, list):
+            parts.extend(str(item) for item in values if item)
+
+    return " ".join(parts).lower()
+
+
+def infer_kol_topic_style(notes):
+    """根据最近笔记内容判断达人更偏哪种内容类型。"""
+    recent_notes = (notes or [])[:16]
+    if not recent_notes:
+        return ""
+
+    scores = {label: 0.0 for label in CONTENT_STYLE_KEYWORDS}
+
+    for idx, note in enumerate(recent_notes):
+        text = build_note_text(note)
+        if not text:
+            continue
+
+        # 越新的笔记权重越高，让分类更贴近达人近期内容方向。
+        weight = 1.5 if idx < 8 else 1.0
+
+        for label, keywords in CONTENT_STYLE_KEYWORDS.items():
+            hit_count = sum(1 for keyword in keywords if keyword.lower() in text)
+            if hit_count:
+                scores[label] += hit_count * weight
+
+        # 明显带家电/家居产品词的合作或开箱内容，更偏测评类。
+        if any(keyword.lower() in text for keyword in HOME_PRODUCT_KEYWORDS):
+            scores["家装测评"] += 0.8 * weight
+        if note.get("isAdvertise") and any(keyword.lower() in text for keyword in HOME_PRODUCT_KEYWORDS):
+            scores["家装测评"] += 1.2 * weight
+
+        # 改造类如果标题里同时出现空间词和改造词，额外提高优先级。
+        if any(keyword in text for keyword in ["改造", "爆改", "翻新", "焕新"]) and any(
+            keyword in text for keyword in ["客厅", "卧室", "厨房", "卫生间", "阳台", "玄关", "旧房", "家"]
+        ):
+            scores["家装改造"] += 1.5 * weight
+
+    if not any(scores.values()):
+        return "家居美学"
+
+    # 同分时优先保留更具体的内容标签，最后才回到通用的家居美学。
+    priority = ["家装改造", "家装测评", "干货分享", "话题类", "家居美学"]
+    best_label = max(priority, key=lambda label: (scores[label], -priority.index(label)))
+    return best_label if scores.get(best_label, 0) > 0 else "家居美学"
 
 
 def build_user_interest_text(fans_profile):
@@ -598,6 +777,8 @@ def run_extraction():
 
                 kol_type = infer_kol_content_type(notes, blogger_data)
                 set_cell(ws, headers, row_idx, "KOL类型（图文/视频）", kol_type)
+                topic_style = infer_kol_topic_style(notes or ((coop_notes_detail or {}).get("list") or []))
+                set_cell(ws, headers, row_idx, "KOL类型（家居美学/家装测评/干货分享/家装改造/话题类）", topic_style)
                 if kol_type == "图文":
                     set_cell(ws, headers, row_idx, "平台价格", get_page_price_value(page, "图文笔记一口价"))
                 elif kol_type == "视频":
@@ -685,6 +866,7 @@ def run_extraction():
 
         last_saved_path = save_progress(wb, OUTPUT_PATH, processed_count)
         context.close()
+        cleanup_dir(SCREENSHOT_DIR)
 
     print(f"\n[完成] 所有任务处理完毕！结果已保存到:\n  {last_saved_path}")
 

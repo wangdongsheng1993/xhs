@@ -11,6 +11,10 @@ DEFAULT_ECOM_INPUT = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电
 DEFAULT_ECOM_OUTPUT = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果.xlsx"
 DEFAULT_ECOM_FALLBACK_OUTPUT = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果_自动保存.xlsx"
 
+DEFAULT_KOC_INPUT = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 (1).xlsx"
+DEFAULT_KOC_OUTPUT = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 (1)_结果.xlsx"
+DEFAULT_KOC_FALLBACK_OUTPUT = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 (1)_结果_自动保存.xlsx"
+
 
 def parse_rows_spec(spec):
     """把 326-329,338 这种写法展开成具体行号列表。"""
@@ -38,6 +42,8 @@ def resolve_mode(mode_text):
         return "brand"
     if text in {"ecommerce", "电商", "小红书电商-kol", "电商sheet", "电商表"}:
         return "ecommerce"
+    if text in {"koc", "提报", "提报koc", "kocsheet", "koc表", "小红书提报-koc"}:
+        return "koc"
     raise ValueError(f"无法识别的 sheet/mode: {mode_text}")
 
 
@@ -52,18 +58,28 @@ def build_mode_config(mode):
             "output_path": DEFAULT_BRAND_OUTPUT,
             "fallback_output_path": "",
         }
-    return {
-        "script": os.path.join(base_dir, "xhs_ecommerce_extractor.py"),
-        "sheet_name": "小红书电商-KOL",
-        "excel_path": DEFAULT_ECOM_INPUT,
-        "output_path": DEFAULT_ECOM_OUTPUT,
-        "fallback_output_path": DEFAULT_ECOM_FALLBACK_OUTPUT,
-    }
+    if mode == "ecommerce":
+        return {
+            "script": os.path.join(base_dir, "xhs_ecommerce_extractor.py"),
+            "sheet_name": "小红书电商-KOL",
+            "excel_path": DEFAULT_ECOM_INPUT,
+            "output_path": DEFAULT_ECOM_OUTPUT,
+            "fallback_output_path": DEFAULT_ECOM_FALLBACK_OUTPUT,
+        }
+    if mode == "koc":
+        return {
+            "script": os.path.join(base_dir, "xhs_koc_extractor.py"),
+            "sheet_name": "小红书提报-KOC",
+            "excel_path": DEFAULT_KOC_INPUT,
+            "output_path": DEFAULT_KOC_OUTPUT,
+            "fallback_output_path": DEFAULT_KOC_FALLBACK_OUTPUT,
+        }
+    raise ValueError(f"不支持的 mode: {mode}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="统一入口：按 sheet 和行号调用品牌/电商 Excel 抓取脚本。")
-    parser.add_argument("mode", help="brand / ecommerce，或直接写 品牌 / 电商")
+    parser = argparse.ArgumentParser(description="统一入口：按 sheet 和行号调用品牌/电商/KOC Excel 抓取脚本。")
+    parser.add_argument("mode", help="brand / ecommerce / koc，或直接写 品牌 / 电商 / 提报")
     parser.add_argument("rows", help="要处理的行号，如 338-340 或 326,327,329")
     parser.add_argument("--excel", dest="excel_path", default="", help="自定义输入 Excel 路径")
     parser.add_argument("--output", dest="output_path", default="", help="自定义输出 Excel 路径")
