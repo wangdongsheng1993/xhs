@@ -26,6 +26,7 @@ from xhs_extractor import (
     get_homepage_url_from_profile_click,
     get_json_with_cache,
     get_level,
+    matches_debug_row,
     get_notes_median_fallback,
     get_page_data_value,
     get_page_price_value,
@@ -35,10 +36,10 @@ from xhs_extractor import (
 )
 
 
-EXCEL_PATH = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1).xlsx"
-OUTPUT_PATH = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果.xlsx"
-FALLBACK_OUTPUT_PATH = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果_自动保存.xlsx"
-SHEET_NAME = "小红书电商-KOL"
+EXCEL_PATH = os.getenv("XHS_EXCEL_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1).xlsx").strip()
+OUTPUT_PATH = os.getenv("XHS_OUTPUT_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果.xlsx").strip()
+FALLBACK_OUTPUT_PATH = os.getenv("XHS_FALLBACK_OUTPUT_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果_自动保存.xlsx").strip()
+SHEET_NAME = os.getenv("XHS_SHEET_NAME", "小红书电商-KOL").strip()
 SCREENSHOT_DIR = os.path.join(os.getcwd(), "ecom_screenshots")
 MAX_NOTE_PAGES = 20
 
@@ -95,7 +96,7 @@ if hasattr(sys.stderr, "reconfigure"):
 def should_process_row(excel_row, kol_name, processed_count):
     if DEBUG_TARGET_ROW:
         try:
-            if excel_row != int(DEBUG_TARGET_ROW):
+            if not matches_debug_row(DEBUG_TARGET_ROW, excel_row):
                 return False
         except Exception:
             pass
@@ -312,6 +313,15 @@ def pick_reference_case_note(notes):
             continue
         text = f"{note.get('title') or ''} {note.get('brandName') or ''}"
         if any(keyword.lower() in text.lower() for keyword in REFERENCE_CASE_KEYWORDS):
+            return note
+
+    for note in notes or []:
+        text = f"{note.get('title') or ''} {note.get('brandName') or ''}"
+        if any(keyword.lower() in text.lower() for keyword in REFERENCE_CASE_KEYWORDS):
+            return note
+
+    for note in notes or []:
+        if note.get("isAdvertise"):
             return note
 
     return None

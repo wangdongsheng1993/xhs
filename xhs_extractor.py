@@ -7,17 +7,19 @@ import statistics
 from playwright.sync_api import sync_playwright
 
 # --- 配置区 ---
-EXCEL_PATH = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本.xlsx"
-OUTPUT_PATH = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表_结果.xlsx"
-SHEET_NAME = "小红书品牌-KOL"
+EXCEL_PATH = os.getenv("XHS_EXCEL_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本.xlsx").strip()
+OUTPUT_PATH = os.getenv("XHS_OUTPUT_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表_结果.xlsx").strip()
+SHEET_NAME = os.getenv("XHS_SHEET_NAME", "小红书品牌-KOL").strip()
 # 浏览器数据目录，用于保存登录状态
 USER_DATA_DIR = os.path.join(os.getcwd(), "browser_session")
 # 每个页面打开后等待的秒数
-PAGE_WAIT_SECONDS = 10
+PAGE_WAIT_SECONDS = 4
 DEBUG_TARGET_NAME = os.getenv("XHS_DEBUG_NAME", "").strip()
 DEBUG_TARGET_ROW = os.getenv("XHS_DEBUG_ROW", "").strip()
 DEBUG_MAX_ROWS = os.getenv("XHS_DEBUG_MAX_ROWS", "").strip()
 DEBUG_VERBOSE = os.getenv("XHS_DEBUG_VERBOSE", "0").strip() == "1"
+LOGIN_WAIT_SECONDS = int(os.getenv("XHS_LOGIN_WAIT_SECONDS", "10").strip() or "10")
+REQUIRE_ENTER_CONFIRM = os.getenv("XHS_REQUIRE_ENTER_CONFIRM", "0").strip() == "1"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -60,18 +62,21 @@ def get_first_visible(locator, timeout=3000):
     return None
 
 def wait_for_login_confirmation():
-    """兼容交互式终端和无 stdin 的运行环境"""
+    """默认自动等待几秒后继续，只有显式要求时才阻塞等待回车。"""
     prompt = "\n>>> 登录完成后，按 Enter 键开始采集..."
-    try:
-        if sys.stdin and sys.stdin.isatty():
-            input(prompt)
-            return
-    except EOFError:
-        pass
+
+    # 只有显式要求人工确认时，才在交互终端里阻塞等待回车。
+    if REQUIRE_ENTER_CONFIRM:
+        try:
+            if sys.stdin and sys.stdin.isatty():
+                input(prompt)
+                return
+        except EOFError:
+            pass
 
     print(prompt)
-    print("检测到当前环境无法交互输入，等待 10 秒后继续，并复用已有登录态...")
-    time.sleep(10)
+    print(f"等待 {LOGIN_WAIT_SECONDS} 秒后自动继续，并复用已有登录态...")
+    time.sleep(LOGIN_WAIT_SECONDS)
 
 def extract_user_id_from_pgy_url(url):
     match = re.search(r'/blogger-detail/([^/?]+)', str(url))
@@ -357,12 +362,42 @@ def goto_with_retry(page, url, wait_until="domcontentloaded", timeout=30000, ret
         raise last_error
     return False
 
+
+def matches_debug_row(target_row_value, actual_row):
+    """支持单行、逗号列表、连续区间三种调试行号写法。"""
+    if not target_row_value:
+        return True
+
+    for part in str(target_row_value).split(","):
+        part = part.strip()
+        if not part:
+            continue
+
+        if "-" in part:
+            try:
+                start_text, end_text = part.split("-", 1)
+                start = int(start_text.strip())
+                end = int(end_text.strip())
+                if end < start:
+                    start, end = end, start
+                if start <= actual_row <= end:
+                    return True
+            except Exception:
+                continue
+        else:
+            try:
+                if actual_row == int(part):
+                    return True
+            except Exception:
+                continue
+
+    return False
+
 def should_process_row(index, row, processed_count):
     """调试模式下按名称、行号或最大条数筛选"""
     if DEBUG_TARGET_ROW:
         try:
-            target_row = int(DEBUG_TARGET_ROW)
-            if index + 1 != target_row:
+            if not matches_debug_row(DEBUG_TARGET_ROW, index + 1):
                 return False
         except:
             pass
