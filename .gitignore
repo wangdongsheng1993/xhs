@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local secrets and environment files
+.env
+.env.*
+
+# Playwright / browser session data
+browser_session/
+ecom_screenshots/
+
+# Local debug and temp files
+debug_pgy.html
+tmp_header.csv
+tiny.png
+tiny_test.xlsx
+*.log
+*.tmp
+
+# Excel working files and outputs
+
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
