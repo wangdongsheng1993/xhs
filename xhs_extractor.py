@@ -4,7 +4,37 @@ import time
 import os
 import sys
 import statistics
+import shutil
+from openpyxl import load_workbook
 from playwright.sync_api import sync_playwright
+
+
+def get_env_int(name, default):
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def get_env_float(name, default):
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def get_env_bool(name, default):
+    value = os.getenv(name, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "y", "on"}
+
 
 # --- 配置区 ---
 EXCEL_PATH = os.getenv("XHS_EXCEL_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本.xlsx").strip()
@@ -13,7 +43,14 @@ SHEET_NAME = os.getenv("XHS_SHEET_NAME", "小红书品牌-KOL").strip()
 # 浏览器数据目录，用于保存登录状态
 USER_DATA_DIR = os.path.join(os.getcwd(), "browser_session")
 # 每个页面打开后等待的秒数
-PAGE_WAIT_SECONDS = 4
+PAGE_WAIT_SECONDS = get_env_float("XHS_PAGE_WAIT_SECONDS", 2.0)
+TAB_WAIT_MS = max(0, get_env_int("XHS_TAB_WAIT_MS", 600))
+SAVE_EVERY_ROWS = max(1, get_env_int("XHS_SAVE_EVERY_ROWS", 5))
+SLOW_MO_MS = max(0, get_env_int("XHS_SLOW_MO_MS", 0))
+PAGE_READY_TIMEOUT_MS = max(500, get_env_int("XHS_PAGE_READY_TIMEOUT_MS", 3000))
+HOMEPAGE_POPUP_WAIT_MS = max(300, get_env_int("XHS_HOMEPAGE_POPUP_WAIT_MS", 1200))
+FORCE_REWRITE = get_env_bool("XHS_FORCE_REWRITE", False)
+SKIP_COMPLETED_ROWS = get_env_bool("XHS_SKIP_COMPLETED_ROWS", True)
 DEBUG_TARGET_NAME = os.getenv("XHS_DEBUG_NAME", "").strip()
 DEBUG_TARGET_ROW = os.getenv("XHS_DEBUG_ROW", "").strip()
 DEBUG_MAX_ROWS = os.getenv("XHS_DEBUG_MAX_ROWS", "").strip()
@@ -25,6 +62,31 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
+def wait_for_profile_page_ready(page, timeout_ms=PAGE_READY_TIMEOUT_MS):
+    """优先等页面关键卡片出现，只有兜底时才使用固定 sleep。"""
+    selectors = [
+        ".blogger-data__item",
+        ".blogger-data__label",
+        ".blogger-data__value",
+        ".price-box",
+    ]
+    deadline = time.time() + max(timeout_ms, 0) / 1000
+    while time.time() < deadline:
+        for selector in selectors:
+            try:
+                locator = page.locator(selector).first
+                if locator.count() and locator.is_visible(timeout=200):
+                    return True
+            except Exception:
+                pass
+        time.sleep(0.2)
+
+    if PAGE_WAIT_SECONDS > 0:
+        page.wait_for_timeout(int(PAGE_WAIT_SECONDS * 1000))
+    return False
+
 
 def parse_w_value(text):
     """处理带 'w' 或 '万' 的数值字符串"""
@@ -154,6 +216,16 @@ def find_cached_json_by_keyword(api_cache, keyword):
             return get_cached_json({url: payload}, url)
     return None
 
+
+def wait_for_cached_json_by_keyword(api_cache, keyword, timeout_ms=5000):
+    deadline = time.time() + max(timeout_ms, 0) / 1000
+    while time.time() < deadline:
+        data = find_cached_json_by_keyword(api_cache, keyword)
+        if data is not None:
+            return data
+        time.sleep(0.2)
+    return None
+
 def format_percent(value):
     """把 0-1 的比例转为四舍五入后的百分比字符串"""
     try:
@@ -165,6 +237,55 @@ def format_percent(value):
         return f"{int(num + 0.5)}%"
     except:
         return ""
+
+
+def to_ratio_decimal(value):
+    """把占比统一转成 Excel 里的小数值，如 0.91。"""
+    try:
+        if value in (None, ""):
+            return ""
+        num = float(value)
+        if num > 1:
+            num /= 100
+        return round(num, 6)
+    except Exception:
+        return ""
+
+
+def is_blank(value):
+    if value is None:
+        return True
+    try:
+        if value != value:
+            return True
+    except Exception:
+        pass
+    if isinstance(value, str):
+        return not value.strip()
+    return False
+
+
+def has_all_values(mapping, fields):
+    for field in fields:
+        if is_blank(mapping.get(field)):
+            return False
+    return True
+
+
+def should_skip_completed_row(mapping, fields):
+    if FORCE_REWRITE or not SKIP_COMPLETED_ROWS:
+        return False
+    return has_all_values(mapping, fields)
+
+
+def assign_df_value(df, index, column, value, updated_cells=None):
+    if column not in df.columns:
+        return
+    if not FORCE_REWRITE and not is_blank(df.at[index, column]):
+        return
+    df.at[index, column] = value
+    if updated_cells is not None:
+        updated_cells[(index, column)] = value
 
 def find_percent(items, targets, name_keys=("group", "name", "desc")):
     """从接口列表中按名称匹配占比"""
@@ -315,13 +436,32 @@ def get_homepage_url_from_profile_click(context, page, red_id):
             if not clickable:
                 clickable = locator.first
 
-            with context.expect_page(timeout=5000) as popup_info:
+            try:
+                href = clickable.evaluate(
+                    """
+                    (el) => {
+                        const anchor = el.closest('a') || el;
+                        return anchor && anchor.href ? anchor.href : '';
+                    }
+                    """
+                )
+                if href and href != "about:blank":
+                    return href
+            except Exception:
+                pass
+
+            with context.expect_page(timeout=3000) as popup_info:
                 clickable.click()
 
             popup = popup_info.value
             popup.wait_for_load_state("domcontentloaded", timeout=10000)
-            popup.wait_for_timeout(2000)
-            url = popup.url or ""
+            url = ""
+            deadline = time.time() + HOMEPAGE_POPUP_WAIT_MS / 1000
+            while time.time() < deadline:
+                url = popup.url or ""
+                if url and url != "about:blank":
+                    break
+                popup.wait_for_timeout(200)
             popup.close()
             if url and url != "about:blank":
                 return url
@@ -397,7 +537,7 @@ def should_process_row(index, row, processed_count):
     """调试模式下按名称、行号或最大条数筛选"""
     if DEBUG_TARGET_ROW:
         try:
-            if not matches_debug_row(DEBUG_TARGET_ROW, index + 1):
+            if not matches_debug_row(DEBUG_TARGET_ROW, index + 2):
                 return False
         except:
             pass
@@ -415,6 +555,77 @@ def should_process_row(index, row, processed_count):
             pass
 
     return True
+
+
+def build_notes_detail_api(user_id, page_number=1):
+    return (
+        "https://pgy.xiaohongshu.com/api/solar/kol/data_v2/notes_detail"
+        f"?advertiseSwitch=1&orderType=1&pageNumber={page_number}&pageSize=8"
+        f"&userId={user_id}&noteType=4&isThirdPlatform=0"
+    )
+
+
+def build_notes_detail_keyword(user_id, page_number=1):
+    return (
+        "/api/solar/kol/data_v2/notes_detail"
+        f"?advertiseSwitch=1&orderType=1&pageNumber={page_number}&pageSize=8"
+        f"&userId={user_id}&noteType=4&isThirdPlatform=0"
+    )
+
+
+def open_brand_note_tabs(page):
+    data_tab = get_first_visible(page.get_by_text("数据概览", exact=True))
+    if data_tab:
+        data_tab.click()
+        if TAB_WAIT_MS:
+            page.wait_for_timeout(TAB_WAIT_MS)
+
+    coop_note_tab = get_first_visible(page.get_by_text("合作笔记", exact=True))
+    if coop_note_tab:
+        coop_note_tab.click()
+        if TAB_WAIT_MS:
+            page.wait_for_timeout(TAB_WAIT_MS)
+
+
+def save_dataframe_progress(df, output_path, updated_cells=None):
+    try:
+        if not updated_cells:
+            if os.path.abspath(EXCEL_PATH) != os.path.abspath(output_path):
+                shutil.copy2(EXCEL_PATH, output_path)
+            print(f"  - 已保存进度到: {output_path}")
+            return
+
+        wb = load_workbook(EXCEL_PATH)
+        ws = wb[SHEET_NAME]
+        header_map = {ws.cell(row=1, column=col).value: col for col in range(1, ws.max_column + 1)}
+
+        for (index, column), value in updated_cells.items():
+            col = header_map.get(column)
+            if not col:
+                continue
+            ws.cell(row=index + 2, column=col).value = value
+
+        wb.save(output_path)
+        print(f"  - 已保存进度到: {output_path}")
+    except Exception as save_err:
+        print(f"警告: 保存失败: {save_err}")
+
+
+BRAND_COMPLETED_FIELDS = [
+    "ID",
+    "主页链接",
+    "粉丝量（w）",
+    "量级",
+    "平台价格",
+    "女粉占比",
+    "18-24年龄占比",
+    "25-34年龄占比（不超50%）",
+    "35-44年龄占比（前2）",
+    "苹果用户占比",
+    "华为用户占比",
+    "近30天预估阅读量\n(近30天阅读中位数）",
+    "近30天互动量\n（近30天互动中位）",
+]
 
 def run_extraction():
     # 1. 检查是否存在 Excel
@@ -437,14 +648,30 @@ def run_extraction():
     except Exception as e:
         print(f"读取失败 (请检查文件是否被 Excel 打开): {e}")
         return
+
+    pending_indexes = []
+    for index, row in df.iterrows():
+        if pd.isna(row.get('主页链接')) and pd.isna(row.get('蒲公英链接')):
+            continue
+        if not should_process_row(index, row, 0):
+            continue
+        if should_skip_completed_row(row, BRAND_COMPLETED_FIELDS):
+            continue
+        pending_indexes.append(index)
+
+    if not pending_indexes:
+        print("当前选中行均已有结果，跳过浏览器采集。")
+        save_dataframe_progress(df, OUTPUT_PATH, updated_cells={})
+        return
     
     # 3. 启动浏览器
     with sync_playwright() as p:
+        updated_cells = {}
         # 使用持久化上下文，保存登录 Cookies
         context = p.chromium.launch_persistent_context(
             user_data_dir=USER_DATA_DIR,
             headless=False,
-            slow_mo=500
+            slow_mo=SLOW_MO_MS
         )
         page = context.new_page()
         api_cache = {}
@@ -498,17 +725,21 @@ def run_extraction():
 
             if not should_process_row(index, row, processed_count):
                 continue
+
+            if should_skip_completed_row(row, BRAND_COMPLETED_FIELDS):
+                print(f"\n>>> [{index+2}/{len(df)+1}] 已有结果，跳过: {row.get('KOL名称', f'Row {index+2}')}")
+                continue
             
             kol_name = row.get('KOL名称', f"Row {index+1}")
-            print(f"\n>>> [{index+1}/{len(df)}] 正在处理: {kol_name}")
+            print(f"\n>>> [{index+2}/{len(df)+1}] 正在处理: {kol_name}")
 
             # --- 步骤 1: 通过蒲公英链接抓取全部数据 ---
             pgy_url = row.get('蒲公英链接')
             if pd.notna(pgy_url) and str(pgy_url).startswith("http"):
                 try:
                     goto_with_retry(page, pgy_url, wait_until="domcontentloaded", timeout=30000, retries=2)
-                    print(f"  - 蒲公英页已打开，等待 {PAGE_WAIT_SECONDS} 秒加载...")
-                    page.wait_for_timeout(PAGE_WAIT_SECONDS * 1000)
+                    print("  - 蒲公英页已打开，等待关键信息加载...")
+                    wait_for_profile_page_ready(page)
 
                     user_id = extract_user_id_from_pgy_url(pgy_url)
                     if not user_id:
@@ -516,25 +747,17 @@ def run_extraction():
                     if DEBUG_VERBOSE:
                         print(f"    [DEBUG] userId: {user_id}")
 
-                    data_tab = get_first_visible(page.get_by_text("数据概览", exact=True))
-                    if data_tab:
-                        data_tab.click()
-                        page.wait_for_timeout(1200)
-                    coop_note_tab = get_first_visible(page.get_by_text("合作笔记", exact=True))
-                    if coop_note_tab:
-                        coop_note_tab.click()
-                        page.wait_for_timeout(2000)
-
                     blogger_api = f"https://pgy.xiaohongshu.com/api/solar/cooperator/user/blogger/{user_id}"
                     fans_profile_api = f"https://pgy.xiaohongshu.com/api/solar/kol/data/{user_id}/fans_profile"
                     summary_api = f"https://pgy.xiaohongshu.com/api/pgy/kol/data/data_summary?userId={user_id}&business=1"
+                    notes_detail_keyword = build_notes_detail_keyword(user_id, 1)
 
                     blogger_data = get_json_with_cache(page, api_cache, blogger_api) or {}
                     fans_profile = get_json_with_cache(page, api_cache, fans_profile_api) or {}
-                    notes_detail = find_cached_json_by_keyword(
-                        api_cache,
-                        f"/api/solar/kol/data_v2/notes_detail?advertiseSwitch=1&orderType=1&pageNumber=1&pageSize=8&userId={user_id}&noteType=4&isThirdPlatform=0"
-                    ) or {}
+                    notes_detail = find_cached_json_by_keyword(api_cache, notes_detail_keyword) or {}
+                    if not notes_detail:
+                        open_brand_note_tabs(page)
+                        notes_detail = wait_for_cached_json_by_keyword(api_cache, notes_detail_keyword, timeout_ms=6000) or {}
 
                     try:
                         summary_data = get_json_with_cache(page, api_cache, summary_api) or {}
@@ -545,42 +768,42 @@ def run_extraction():
                     # 小红书号
                     red_id = blogger_data.get("redId", "")
                     if red_id:
-                        df.at[index, 'ID'] = red_id
+                        assign_df_value(df, index, 'ID', red_id, updated_cells)
                         print(f"  - 抓取小红书号: {red_id}")
 
                         homepage_url = get_homepage_url_from_profile_click(context, page, red_id)
                         if homepage_url:
-                            df.at[index, '主页链接'] = homepage_url
+                            assign_df_value(df, index, '主页链接', homepage_url, updated_cells)
                             print(f"  - 抓取主页链接: {homepage_url}")
 
                     # 基础统计：直接取页面显示值
                     fans_text = get_page_data_value(page, "粉丝数")
                     likes_text = get_page_data_value(page, "获赞与收藏")
                     fans_w = parse_w_value(fans_text)
-                    df.at[index, '粉丝量（w）'] = fans_w
-                    df.at[index, '量级'] = get_level(fans_w)
-                    df.at[index, '赞藏量（w）'] = parse_w_value(likes_text)
+                    assign_df_value(df, index, '粉丝量（w）', fans_w, updated_cells)
+                    assign_df_value(df, index, '量级', get_level(fans_w), updated_cells)
+                    assign_df_value(df, index, '赞藏量（w）', parse_w_value(likes_text), updated_cells)
 
                     # 平台价格与合作形式
                     cooperation_form = infer_cooperation_form_from_notes(notes_detail, blogger_data)
                     if cooperation_form:
-                        df.at[index, '合作形式'] = cooperation_form
+                        assign_df_value(df, index, '合作形式', cooperation_form, updated_cells)
                     if cooperation_form == "图文":
-                        df.at[index, '平台价格'] = get_page_price_value(page, "图文笔记一口价")
+                        assign_df_value(df, index, '平台价格', get_page_price_value(page, "图文笔记一口价"), updated_cells)
                     elif cooperation_form == "视频":
-                        df.at[index, '平台价格'] = get_page_price_value(page, "视频笔记一口价")
+                        assign_df_value(df, index, '平台价格', get_page_price_value(page, "视频笔记一口价"), updated_cells)
 
                     # 粉丝画像
                     gender_data = fans_profile.get("gender") or {}
                     age_data = fans_profile.get("ages") or []
                     device_data = fans_profile.get("devices") or []
 
-                    df.at[index, '女粉占比'] = format_percent(gender_data.get("female"))
-                    df.at[index, '18-24年龄占比'] = format_percent(find_percent(age_data, "18-24"))
-                    df.at[index, '25-34年龄占比（不超50%）'] = format_percent(find_percent(age_data, "25-34"))
-                    df.at[index, '35-44年龄占比（前2）'] = format_percent(find_percent(age_data, "35-44"))
-                    df.at[index, '苹果用户占比'] = format_percent(find_percent(device_data, ["apple inc.", "apple", "苹果"]))
-                    df.at[index, '华为用户占比'] = format_percent(find_percent(device_data, ["huawei", "华为"]))
+                    assign_df_value(df, index, '女粉占比', to_ratio_decimal(gender_data.get("female")), updated_cells)
+                    assign_df_value(df, index, '18-24年龄占比', to_ratio_decimal(find_percent(age_data, "18-24")), updated_cells)
+                    assign_df_value(df, index, '25-34年龄占比（不超50%）', to_ratio_decimal(find_percent(age_data, "25-34")), updated_cells)
+                    assign_df_value(df, index, '35-44年龄占比（前2）', to_ratio_decimal(find_percent(age_data, "35-44")), updated_cells)
+                    assign_df_value(df, index, '苹果用户占比', to_ratio_decimal(find_percent(device_data, ["apple inc.", "apple", "苹果"])), updated_cells)
+                    assign_df_value(df, index, '华为用户占比', to_ratio_decimal(find_percent(device_data, ["huawei", "华为"])), updated_cells)
 
                     # 数据概览中位数
                     col_read = "近30天预估阅读量\n(近30天阅读中位数）"
@@ -590,24 +813,22 @@ def run_extraction():
                         read_value = summary_data.get("mValidRawReadFeedNum", 0) or 0
                         if not read_value:
                             read_value = fallback_read
-                        df.at[index, col_read] = read_value
+                        assign_df_value(df, index, col_read, read_value, updated_cells)
                     if col_interact in df.columns:
                         interact_value = summary_data.get("mEngagementNum", 0) or 0
                         if not interact_value:
                             interact_value = fallback_interact
-                        df.at[index, col_interact] = interact_value
+                        assign_df_value(df, index, col_interact, interact_value, updated_cells)
 
                 except Exception as e:
                     print(f"  - 蒲公英数据抓取失败: {e}")
 
-            # 每行处理完即时保存到新文件，防止原文件被占用
-            try:
-                df.to_excel(OUTPUT_PATH, sheet_name=SHEET_NAME, index=False)
-                print(f"  - 已保存进度到: {OUTPUT_PATH}")
-            except Exception as save_err:
-                print(f"警告: 保存失败: {save_err}")
-
             processed_count += 1
+            if processed_count % SAVE_EVERY_ROWS == 0:
+                save_dataframe_progress(df, OUTPUT_PATH, updated_cells)
+
+        if processed_count:
+            save_dataframe_progress(df, OUTPUT_PATH, updated_cells)
                 
     print(f"\n[完成] 所有任务处理完毕！结果已保存到:\n  {OUTPUT_PATH}")
 

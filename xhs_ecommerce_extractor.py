@@ -17,12 +17,16 @@ from xhs_extractor import (
     DEBUG_TARGET_NAME,
     DEBUG_TARGET_ROW,
     DEBUG_VERBOSE,
-    PAGE_WAIT_SECONDS,
+    FORCE_REWRITE,
+    SAVE_EVERY_ROWS,
+    SLOW_MO_MS,
+    TAB_WAIT_MS,
     USER_DATA_DIR,
+    build_notes_detail_keyword,
+    has_all_values,
+    is_blank,
     extract_user_id_from_pgy_url,
-    find_cached_json_by_keyword,
     find_percent,
-    format_percent,
     get_first_visible,
     get_homepage_url_from_profile_click,
     get_json_with_cache,
@@ -33,6 +37,9 @@ from xhs_extractor import (
     get_page_price_value,
     goto_with_retry,
     parse_w_value,
+    to_ratio_decimal,
+    wait_for_cached_json_by_keyword,
+    wait_for_profile_page_ready,
     wait_for_login_confirmation,
 )
 
@@ -242,8 +249,12 @@ def header_map(ws):
 
 def set_cell(ws, headers, row_idx, header, value):
     col = headers.get(header)
-    if col:
-        ws.cell(row=row_idx, column=col).value = value
+    if not col:
+        return
+    cell = ws.cell(row=row_idx, column=col)
+    if not FORCE_REWRITE and not is_blank(cell.value):
+        return
+    cell.value = value
 
 
 def get_cell_ref(headers, row_idx, header):
@@ -264,6 +275,8 @@ def prepare_sheet_layout(ws, headers):
 def queue_image_for_cell(ws, headers, image_jobs, row_idx, header, image_path, width, height):
     cell_ref = get_cell_ref(headers, row_idx, header)
     if not cell_ref or not image_path or not os.path.exists(image_path):
+        return
+    if not FORCE_REWRITE and not is_blank(ws[cell_ref].value):
         return
     ws.row_dimensions[row_idx].height = max(ws.row_dimensions[row_idx].height or 15, height * 0.75)
     ws[cell_ref].value = None
@@ -297,32 +310,33 @@ def parse_note_date(text):
 
 def click_tab(page, label):
     tab = get_first_visible(page.get_by_text(label, exact=True))
-    if tab:
+    if not tab:
+        return False
+
+    clicked = False
+    try:
+        tab_classes = (tab.get_attribute("class") or "").lower()
+        aria_selected = (tab.get_attribute("aria-selected") or "").lower()
+        if "active" not in tab_classes and aria_selected != "true":
+            tab.click()
+            clicked = True
+    except Exception:
         tab.click()
-        page.wait_for_timeout(1500)
-        return True
-    return False
+        clicked = True
+
+    if clicked and TAB_WAIT_MS:
+        page.wait_for_timeout(TAB_WAIT_MS)
+    return True
 
 
-def wait_for_notes_page_data(api_cache, user_id, page_number, timeout_ms=8000):
-    keyword = (
-        f"/api/solar/kol/data_v2/notes_detail?advertiseSwitch=1&orderType=1&pageNumber={page_number}"
-        f"&pageSize=8&userId={user_id}&noteType=4&isThirdPlatform=0"
-    )
-    deadline = time.time() + timeout_ms / 1000
-    while time.time() < deadline:
-        data = find_cached_json_by_keyword(api_cache, keyword)
-        if data:
-            return data
-        time.sleep(0.2)
-    return None
+def wait_for_notes_page_data(api_cache, user_id, page_number, timeout_ms=6000):
+    keyword = build_notes_detail_keyword(user_id, page_number)
+    return wait_for_cached_json_by_keyword(api_cache, keyword, timeout_ms=timeout_ms)
 
 
 def collect_recent_notes(page, api_cache, user_id):
     notes = []
     click_tab(page, "笔记数据")
-    page.wait_for_timeout(2000)
-
     first_page = wait_for_notes_page_data(api_cache, user_id, 1)
     if not first_page:
         return notes
@@ -347,15 +361,19 @@ def collect_recent_notes(page, api_cache, user_id):
         if oldest and oldest < cutoff_90 and len(notes) >= 16:
             break
 
+        current_page += 1
+        if current_page > min(total_pages, MAX_NOTE_PAGES):
+            break
+
         next_button = page.locator(".d-pagination .d-pagination-page").last
         next_cls = next_button.get_attribute("class") or ""
         if "disabled" in next_cls:
             break
 
         next_button.click()
-        page.wait_for_timeout(1800)
-        current_page += 1
         current_data = wait_for_notes_page_data(api_cache, user_id, current_page)
+        if not current_data:
+            break
 
     return notes
 
@@ -378,6 +396,25 @@ def infer_kol_content_type(notes, blogger_data):
     if blogger_data.get("pictureState") == 1:
         return "图文"
     return ""
+
+
+ECOM_COMPLETED_FIELDS = [
+    "ID",
+    "主页链接",
+    "粉丝量（w）",
+    "量级",
+    "平台价格",
+    "女粉占比",
+    "18-24年龄占比",
+    "25-34年龄占比",
+    "35-44年龄占比",
+    "苹果用户占比",
+    "华为用户占比",
+    "近30天预估阅读量\n(近30天阅读中位数）",
+    "近30天互动量\n（近30天互动中位）",
+    "近30天笔记数量",
+    "近90天爆文篇数",
+]
 
 
 def build_note_text(note):
@@ -519,14 +556,14 @@ def try_close_note_detail(page):
             locator = page.locator(selector).first
             if locator.count() and locator.is_visible(timeout=1000):
                 locator.click()
-                page.wait_for_timeout(800)
+                page.wait_for_timeout(max(300, TAB_WAIT_MS // 2 or 300))
                 return
         except Exception:
             pass
 
     try:
         page.keyboard.press("Escape")
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(max(200, TAB_WAIT_MS // 3 or 200))
     except Exception:
         pass
 
@@ -549,7 +586,7 @@ def copy_note_link_from_case_detail(page, notes, target_note):
         note_case_tab = get_first_visible(page.locator("#noteCase").get_by_text("合作笔记", exact=True))
         if note_case_tab:
             note_case_tab.click()
-            page.wait_for_timeout(1200)
+            page.wait_for_timeout(max(500, TAB_WAIT_MS))
 
         try:
             page.evaluate("navigator.clipboard.writeText('')")
@@ -566,14 +603,14 @@ def copy_note_link_from_case_detail(page, notes, target_note):
             return ""
 
         note_mask.click(force=True)
-        page.wait_for_timeout(1800)
+        page.wait_for_timeout(max(800, TAB_WAIT_MS + 300))
 
         copy_btn = page.get_by_text("复制小红书笔记链接", exact=False).first
         if not copy_btn.count():
             return ""
 
         copy_btn.click(force=True)
-        page.wait_for_timeout(1200)
+        page.wait_for_timeout(max(500, TAB_WAIT_MS))
 
         copied = page.evaluate("navigator.clipboard.readText()")
         copied = (copied or "").strip()
@@ -604,12 +641,32 @@ def capture_locator(locator, path):
     locator.screenshot(path=path)
 
 
+def wait_for_fans_analysis_ready(page, timeout_ms=None):
+    timeout_ms = timeout_ms or max(1200, TAB_WAIT_MS + 600)
+    selectors = [
+        ".sex-chart__wrapper .pgy-pie-chart",
+        ".age-chart__wrapper .titlePic",
+        ".area-chart__wrapper .titlePic",
+    ]
+    deadline = time.time() + timeout_ms / 1000
+    while time.time() < deadline:
+        for selector in selectors:
+            try:
+                locator = page.locator(selector).first
+                if locator.count() and locator.is_visible(timeout=200):
+                    return True
+            except Exception:
+                pass
+        time.sleep(0.2)
+    return False
+
+
 def capture_fans_analysis_images(page, base_dir):
     ensure_dir(base_dir)
     result = {}
 
     click_tab(page, "粉丝分析")
-    page.wait_for_timeout(2500)
+    wait_for_fans_analysis_ready(page)
 
     sex_loc = page.locator(".sex-chart__wrapper .pgy-pie-chart").first
     if sex_loc.count():
@@ -668,11 +725,35 @@ def run_extraction():
     prepare_sheet_layout(ws, headers)
     wb._codex_image_jobs = {ws.title: []}
 
+    pending_rows = []
+    for row_idx in range(2, ws.max_row + 1):
+        kol_name = ws.cell(row=row_idx, column=headers["KOL名称"]).value if headers.get("KOL名称") else ""
+        pgy_url = ws.cell(row=row_idx, column=headers["蒲公英链接"]).value if headers.get("蒲公英链接") else ""
+        if not pgy_url or not str(pgy_url).startswith("http"):
+            continue
+        if not should_process_row(row_idx, kol_name, len(pending_rows)):
+            continue
+        row_snapshot = {
+            header: ws.cell(row=row_idx, column=col).value
+            for header, col in headers.items()
+            if header
+        }
+        if not FORCE_REWRITE and has_all_values(row_snapshot, ECOM_COMPLETED_FIELDS):
+            continue
+        pending_rows.append(row_idx)
+
+    if not pending_rows:
+        print("当前选中行均已有结果，跳过浏览器采集。")
+        last_saved_path = save_progress(wb, OUTPUT_PATH, 0)
+        cleanup_dir(SCREENSHOT_DIR)
+        print(f"\n[完成] 所有任务处理完毕！结果已保存到:\n  {last_saved_path}")
+        return
+
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             user_data_dir=USER_DATA_DIR,
             headless=False,
-            slow_mo=500
+            slow_mo=SLOW_MO_MS
         )
         page = context.new_page()
         api_cache = {}
@@ -719,13 +800,22 @@ def run_extraction():
             if not should_process_row(row_idx, kol_name, processed_count):
                 continue
 
+            row_snapshot = {
+                header: ws.cell(row=row_idx, column=col).value
+                for header, col in headers.items()
+                if header
+            }
+            if not FORCE_REWRITE and has_all_values(row_snapshot, ECOM_COMPLETED_FIELDS):
+                print(f"\n>>> [{row_idx}/{ws.max_row}] 已有结果，跳过: {kol_name}")
+                continue
+
             print(f"\n>>> [{row_idx}/{ws.max_row}] 正在处理: {kol_name}")
             api_cache.clear()
 
             try:
                 goto_with_retry(page, str(pgy_url), wait_until="domcontentloaded", timeout=30000, retries=2)
-                print(f"  - 蒲公英页已打开，等待 {PAGE_WAIT_SECONDS} 秒加载...")
-                page.wait_for_timeout(PAGE_WAIT_SECONDS * 1000)
+                print("  - 蒲公英页已打开，等待关键信息加载...")
+                wait_for_profile_page_ready(page)
 
                 user_id = extract_user_id_from_pgy_url(pgy_url)
                 if not user_id:
@@ -734,6 +824,7 @@ def run_extraction():
                 blogger_api = f"https://pgy.xiaohongshu.com/api/solar/cooperator/user/blogger/{user_id}"
                 fans_profile_api = f"https://pgy.xiaohongshu.com/api/solar/kol/data/{user_id}/fans_profile"
                 summary_api = f"https://pgy.xiaohongshu.com/api/pgy/kol/data/data_summary?userId={user_id}&business=1"
+                coop_notes_keyword = build_notes_detail_keyword(user_id, 1)
 
                 click_tab(page, "数据概览")
                 click_tab(page, "合作笔记")
@@ -741,10 +832,7 @@ def run_extraction():
 
                 blogger_data = get_json_with_cache(page, api_cache, blogger_api) or {}
                 fans_profile = get_json_with_cache(page, api_cache, fans_profile_api) or {}
-                coop_notes_detail = find_cached_json_by_keyword(
-                    api_cache,
-                    f"/api/solar/kol/data_v2/notes_detail?advertiseSwitch=1&orderType=1&pageNumber=1&pageSize=8&userId={user_id}&noteType=4&isThirdPlatform=0"
-                ) or {}
+                coop_notes_detail = wait_for_cached_json_by_keyword(api_cache, coop_notes_keyword, timeout_ms=6000) or {}
 
                 try:
                     summary_data = get_json_with_cache(page, api_cache, summary_api) or {}
@@ -784,10 +872,15 @@ def run_extraction():
                 elif kol_type == "视频":
                     set_cell(ws, headers, row_idx, "平台价格", get_page_price_value(page, "视频笔记一口价"))
 
+                gender_data = fans_profile.get("gender") or {}
                 age_data = fans_profile.get("ages") or []
                 device_data = fans_profile.get("devices") or []
-                set_cell(ws, headers, row_idx, "苹果用户占比", format_percent(find_percent(device_data, ["apple inc.", "apple", "苹果"])))
-                set_cell(ws, headers, row_idx, "华为用户占比", format_percent(find_percent(device_data, ["huawei", "华为"])))
+                set_cell(ws, headers, row_idx, "女粉占比", to_ratio_decimal(gender_data.get("female")))
+                set_cell(ws, headers, row_idx, "18-24年龄占比", to_ratio_decimal(find_percent(age_data, "18-24")))
+                set_cell(ws, headers, row_idx, "25-34年龄占比", to_ratio_decimal(find_percent(age_data, "25-34")))
+                set_cell(ws, headers, row_idx, "35-44年龄占比", to_ratio_decimal(find_percent(age_data, "35-44")))
+                set_cell(ws, headers, row_idx, "苹果用户占比", to_ratio_decimal(find_percent(device_data, ["apple inc.", "apple", "苹果"])))
+                set_cell(ws, headers, row_idx, "华为用户占比", to_ratio_decimal(find_percent(device_data, ["huawei", "华为"])))
 
                 col_read = "近30天预估阅读量\n(近30天阅读中位数）"
                 col_interact = "近30天互动量\n（近30天互动中位）"
@@ -861,7 +954,7 @@ def run_extraction():
                 print(f"  - 电商表数据抓取失败: {e}")
 
             processed_count += 1
-            if processed_count % 5 == 0:
+            if processed_count % SAVE_EVERY_ROWS == 0:
                 last_saved_path = save_progress(wb, OUTPUT_PATH, processed_count)
 
         last_saved_path = save_progress(wb, OUTPUT_PATH, processed_count)

@@ -9,10 +9,12 @@ from xhs_extractor import (
     DEBUG_MAX_ROWS,
     DEBUG_TARGET_NAME,
     DEBUG_TARGET_ROW,
-    PAGE_WAIT_SECONDS,
+    FORCE_REWRITE,
+    SAVE_EVERY_ROWS,
+    SLOW_MO_MS,
     USER_DATA_DIR,
+    build_notes_detail_keyword,
     extract_user_id_from_pgy_url,
-    find_cached_json_by_keyword,
     find_percent,
     get_json_with_cache,
     get_level,
@@ -20,9 +22,13 @@ from xhs_extractor import (
     get_page_data_value,
     get_page_price_value,
     goto_with_retry,
+    has_all_values,
     infer_cooperation_form_from_notes,
+    is_blank,
     matches_debug_row,
     parse_w_value,
+    wait_for_cached_json_by_keyword,
+    wait_for_profile_page_ready,
     wait_for_login_confirmation,
     get_homepage_url_from_profile_click,
 )
@@ -57,8 +63,12 @@ def header_map(ws):
 
 def set_cell(ws, headers, row_idx, header, value):
     col = headers.get(header)
-    if col:
-        ws.cell(row=row_idx, column=col).value = value
+    if not col:
+        return
+    cell = ws.cell(row=row_idx, column=col)
+    if not FORCE_REWRITE and not is_blank(cell.value):
+        return
+    cell.value = value
 
 
 def normalize_mode(text):
@@ -68,6 +78,23 @@ def normalize_mode(text):
     if "电商" in value:
         return "ecommerce"
     return ""
+
+
+KOC_COMPLETED_FIELDS = [
+    "ID",
+    "主页链接",
+    "粉丝量（w）",
+    "量级",
+    "平台价格",
+    "女粉占比",
+    "18-24年龄占比",
+    "25-34年龄占比",
+    "35-44年龄占比",
+    "苹果用户占比",
+    "华为用户占比",
+    "近30天预估阅读量\n(近30天阅读中位数）",
+    "近30天互动量\n（近30天互动中位）",
+]
 
 
 def to_ratio_decimal(value):
@@ -170,6 +197,12 @@ def get_platform_price(page, mode, coop_notes_detail, notes, blogger_data):
     return 0.0
 
 
+def normalize_koc_level(level_text):
+    if str(level_text or "").strip().upper() == "KOC":
+        return "koc"
+    return level_text
+
+
 def run_extraction():
     if not os.path.exists(EXCEL_PATH):
         print(f"错误: 找不到文件 {EXCEL_PATH}")
@@ -184,11 +217,39 @@ def run_extraction():
         from openpyxl.utils import get_column_letter
         ws.column_dimensions[get_column_letter(headers["18-24年龄占比"])].width = 26
 
+    pending_rows = []
+    for row_idx in range(2, ws.max_row + 1):
+        kol_name = ws.cell(row=row_idx, column=headers["KOL名称"]).value if headers.get("KOL名称") else ""
+        pgy_url = ws.cell(row=row_idx, column=headers["蒲公英链接"]).value if headers.get("蒲公英链接") else ""
+        mode_text = ws.cell(row=row_idx, column=headers["品牌/电商"]).value if headers.get("品牌/电商") else ""
+        mode = normalize_mode(mode_text)
+        if not pgy_url or not str(pgy_url).startswith("http"):
+            continue
+        if mode not in {"brand", "ecommerce"}:
+            continue
+        if not should_process_row(row_idx, kol_name, len(pending_rows)):
+            continue
+        row_snapshot = {
+            header: ws.cell(row=row_idx, column=col).value
+            for header, col in headers.items()
+            if header
+        }
+        if not FORCE_REWRITE and has_all_values(row_snapshot, KOC_COMPLETED_FIELDS):
+            continue
+        pending_rows.append(row_idx)
+
+    if not pending_rows:
+        print("当前选中行均已有结果，跳过浏览器采集。")
+        last_saved_path = save_progress(wb, OUTPUT_PATH)
+        cleanup_dir(SCREENSHOT_DIR)
+        print(f"\n[完成] 所有任务处理完毕！结果已保存到:\n  {last_saved_path}")
+        return
+
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             user_data_dir=USER_DATA_DIR,
             headless=False,
-            slow_mo=500,
+            slow_mo=SLOW_MO_MS,
         )
         page = context.new_page()
         api_cache = {}
@@ -241,13 +302,22 @@ def run_extraction():
             if not should_process_row(row_idx, kol_name, processed_count):
                 continue
 
+            row_snapshot = {
+                header: ws.cell(row=row_idx, column=col).value
+                for header, col in headers.items()
+                if header
+            }
+            if not FORCE_REWRITE and has_all_values(row_snapshot, KOC_COMPLETED_FIELDS):
+                print(f"\n>>> [{row_idx}/{ws.max_row}] 已有结果，跳过: {kol_name}")
+                continue
+
             print(f"\n>>> [{row_idx}/{ws.max_row}] 正在处理: {kol_name}")
             api_cache.clear()
 
             try:
                 goto_with_retry(page, str(pgy_url), wait_until="domcontentloaded", timeout=30000, retries=2)
-                print(f"  - 蒲公英页已打开，等待 {PAGE_WAIT_SECONDS} 秒加载...")
-                page.wait_for_timeout(PAGE_WAIT_SECONDS * 1000)
+                print("  - 蒲公英页已打开，等待关键信息加载...")
+                wait_for_profile_page_ready(page)
 
                 user_id = extract_user_id_from_pgy_url(pgy_url)
                 if not user_id:
@@ -256,6 +326,7 @@ def run_extraction():
                 blogger_api = f"https://pgy.xiaohongshu.com/api/solar/cooperator/user/blogger/{user_id}"
                 fans_profile_api = f"https://pgy.xiaohongshu.com/api/solar/kol/data/{user_id}/fans_profile"
                 summary_api = f"https://pgy.xiaohongshu.com/api/pgy/kol/data/data_summary?userId={user_id}&business=1"
+                coop_notes_keyword = build_notes_detail_keyword(user_id, 1)
 
                 click_tab(page, "数据概览")
                 click_tab(page, "合作笔记")
@@ -263,10 +334,7 @@ def run_extraction():
 
                 blogger_data = get_json_with_cache(page, api_cache, blogger_api) or {}
                 fans_profile = get_json_with_cache(page, api_cache, fans_profile_api) or {}
-                coop_notes_detail = find_cached_json_by_keyword(
-                    api_cache,
-                    f"/api/solar/kol/data_v2/notes_detail?advertiseSwitch=1&orderType=1&pageNumber=1&pageSize=8&userId={user_id}&noteType=4&isThirdPlatform=0",
-                ) or {}
+                coop_notes_detail = wait_for_cached_json_by_keyword(api_cache, coop_notes_keyword, timeout_ms=6000) or {}
 
                 try:
                     summary_data = get_json_with_cache(page, api_cache, summary_api) or {}
@@ -297,7 +365,7 @@ def run_extraction():
                 likes_text = get_page_data_value(page, "获赞与收藏")
                 fans_w = parse_page_w_value(fans_text)
                 set_cell(ws, headers, row_idx, "粉丝量（w）", fans_w)
-                set_cell(ws, headers, row_idx, "量级", get_level(fans_w))
+                set_cell(ws, headers, row_idx, "量级", normalize_koc_level(get_level(fans_w)))
                 set_cell(ws, headers, row_idx, "赞藏量（w）", parse_page_w_value(likes_text))
 
                 gender_data = fans_profile.get("gender") or {}
@@ -343,7 +411,7 @@ def run_extraction():
                 print(f"  - KOC 表数据抓取失败: {e}")
 
             processed_count += 1
-            if processed_count % 5 == 0:
+            if processed_count % SAVE_EVERY_ROWS == 0:
                 last_saved_path = save_progress(wb, OUTPUT_PATH)
 
         last_saved_path = save_progress(wb, OUTPUT_PATH)
