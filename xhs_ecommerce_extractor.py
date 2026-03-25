@@ -36,7 +36,7 @@ from xhs_extractor import (
     get_page_data_value,
     get_page_price_value,
     goto_with_retry,
-    parse_w_value,
+    parse_page_w_value,
     to_ratio_decimal,
     wait_for_cached_json_by_keyword,
     wait_for_profile_page_ready,
@@ -858,10 +858,10 @@ def run_extraction():
 
                 fans_text = get_page_data_value(page, "粉丝数")
                 likes_text = get_page_data_value(page, "获赞与收藏")
-                fans_w = parse_w_value(fans_text)
+                fans_w = parse_page_w_value(fans_text)
                 set_cell(ws, headers, row_idx, "粉丝量（w）", fans_w)
                 set_cell(ws, headers, row_idx, "量级", get_level(fans_w))
-                set_cell(ws, headers, row_idx, "赞藏量（w）", parse_w_value(likes_text))
+                set_cell(ws, headers, row_idx, "赞藏量（w）", parse_page_w_value(likes_text))
 
                 kol_type = infer_kol_content_type(notes, blogger_data)
                 set_cell(ws, headers, row_idx, "KOL类型（图文/视频）", kol_type)
@@ -953,6 +953,7 @@ def run_extraction():
             except Exception as e:
                 print(f"  - 电商表数据抓取失败: {e}")
 
+            print(f"  - 第 {row_idx} 行处理完成")
             processed_count += 1
             if processed_count % SAVE_EVERY_ROWS == 0:
                 last_saved_path = save_progress(wb, OUTPUT_PATH, processed_count)

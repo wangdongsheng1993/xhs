@@ -20,6 +20,17 @@ MODE_OPTIONS = [
 XLSX_FILE_TYPES = [("Excel files", "*.xlsx"), ("All files", "*.*")]
 
 
+def resolve_cli_python():
+    current = sys.executable
+    folder = os.path.dirname(current)
+    name = os.path.basename(current).lower()
+    if name == "pythonw.exe":
+        candidate = os.path.join(folder, "python.exe")
+        if os.path.exists(candidate):
+            return candidate
+    return current
+
+
 def derive_output_path(input_path):
     if not input_path:
         return ""
@@ -222,7 +233,8 @@ class LauncherApp:
 
     def _build_command(self, input_path, output_path, rows):
         command = [
-            sys.executable,
+            resolve_cli_python(),
+            "-u",
             RUNNER_PATH,
             self.mode_var.get(),
             rows,
@@ -256,6 +268,9 @@ class LauncherApp:
         env = os.environ.copy()
         env["XHS_LOGIN_WAIT_SECONDS"] = login_wait
         env["XHS_REQUIRE_ENTER_CONFIRM"] = "0"
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
 
         command = self._build_command(input_path, output_path, rows)
 

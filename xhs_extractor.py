@@ -99,6 +99,34 @@ def parse_w_value(text):
     except:
         return 0.0
 
+
+def parse_page_w_value(text):
+    """处理页面展示值，兼容 9576 / 4.8w / 1.2万 / 3k 这类写法。"""
+    raw_text = str(text or "").strip().lower()
+    if not raw_text:
+        return 0.0
+
+    if any(unit in raw_text for unit in ["w", "万", "k"]):
+        return parse_w_value(raw_text)
+
+    clean_text = (
+        raw_text.replace(",", "")
+        .replace("+", "")
+        .replace("粉丝", "")
+        .replace("获赞与收藏", "")
+        .strip()
+    )
+
+    try:
+        num = float(clean_text)
+    except Exception:
+        return 0.0
+
+    if "." in clean_text and num < 100:
+        return num
+
+    return round(num / 10000, 4)
+
 def get_level(fans_w):
     """根据粉丝量（w）计算量级"""
     if fans_w < 1: return "KOC"
@@ -779,10 +807,10 @@ def run_extraction():
                     # 基础统计：直接取页面显示值
                     fans_text = get_page_data_value(page, "粉丝数")
                     likes_text = get_page_data_value(page, "获赞与收藏")
-                    fans_w = parse_w_value(fans_text)
+                    fans_w = parse_page_w_value(fans_text)
                     assign_df_value(df, index, '粉丝量（w）', fans_w, updated_cells)
                     assign_df_value(df, index, '量级', get_level(fans_w), updated_cells)
-                    assign_df_value(df, index, '赞藏量（w）', parse_w_value(likes_text), updated_cells)
+                    assign_df_value(df, index, '赞藏量（w）', parse_page_w_value(likes_text), updated_cells)
 
                     # 平台价格与合作形式
                     cooperation_form = infer_cooperation_form_from_notes(notes_detail, blogger_data)
@@ -823,6 +851,7 @@ def run_extraction():
                 except Exception as e:
                     print(f"  - 蒲公英数据抓取失败: {e}")
 
+            print(f"  - 第 {index + 2} 行处理完成")
             processed_count += 1
             if processed_count % SAVE_EVERY_ROWS == 0:
                 save_dataframe_progress(df, OUTPUT_PATH, updated_cells)

@@ -26,7 +26,7 @@ from xhs_extractor import (
     infer_cooperation_form_from_notes,
     is_blank,
     matches_debug_row,
-    parse_w_value,
+    parse_page_w_value,
     wait_for_cached_json_by_keyword,
     wait_for_profile_page_ready,
     wait_for_login_confirmation,
@@ -107,33 +107,6 @@ def to_ratio_decimal(value):
     if num > 1:
         num /= 100
     return round(num, 6)
-
-
-def parse_page_w_value(text):
-    raw_text = str(text or "").strip().lower()
-    if not raw_text:
-        return 0.0
-
-    if any(unit in raw_text for unit in ["w", "万", "k"]):
-        return parse_w_value(raw_text)
-
-    clean_text = (
-        raw_text.replace(",", "")
-        .replace("+", "")
-        .replace("粉丝", "")
-        .replace("获赞与收藏", "")
-        .strip()
-    )
-
-    try:
-        num = float(clean_text)
-    except Exception:
-        return 0.0
-
-    if "." in clean_text and num < 100:
-        return num
-
-    return round(num / 10000, 4)
 
 
 def should_process_row(excel_row, kol_name, processed_count):
@@ -410,6 +383,7 @@ def run_extraction():
             except Exception as e:
                 print(f"  - KOC 表数据抓取失败: {e}")
 
+            print(f"  - 第 {row_idx} 行处理完成")
             processed_count += 1
             if processed_count % SAVE_EVERY_ROWS == 0:
                 last_saved_path = save_progress(wb, OUTPUT_PATH)

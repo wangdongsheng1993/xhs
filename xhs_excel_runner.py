@@ -3,6 +3,11 @@ import os
 import subprocess
 import sys
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 DEFAULT_BRAND_INPUT = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本.xlsx"
 DEFAULT_BRAND_OUTPUT = r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表_结果.xlsx"
@@ -93,11 +98,11 @@ def main():
     excel_path = args.excel_path.strip() or config["excel_path"]
     output_path = args.output_path.strip() or config["output_path"]
 
-    print(f"模式: {mode}")
-    print(f"Sheet: {config['sheet_name']}")
-    print(f"输入文件: {excel_path}")
-    print(f"输出文件: {output_path}")
-    print(f"处理行: {rows}")
+    print(f"模式: {mode}", flush=True)
+    print(f"Sheet: {config['sheet_name']}", flush=True)
+    print(f"输入文件: {excel_path}", flush=True)
+    print(f"输出文件: {output_path}", flush=True)
+    print(f"处理行: {rows}", flush=True)
 
     env = os.environ.copy()
     env["XHS_DEBUG_ROW"] = args.rows.strip()
