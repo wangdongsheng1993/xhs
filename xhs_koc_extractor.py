@@ -158,11 +158,14 @@ def save_progress(wb, output_path):
 
 
 def get_platform_price(page, mode, coop_notes_detail, notes, blogger_data):
+    # "小红书提报-KOC" sheet 直接取图文笔记一口价
     if mode == "brand":
         content_type = infer_cooperation_form_from_notes(coop_notes_detail, blogger_data)
     else:
         content_type = infer_kol_content_type(notes, blogger_data)
 
+    if SHEET_NAME == "小红书提报-KOC":
+        return get_page_price_value(page, "图文笔记一口价")
     if content_type == "图文":
         return get_page_price_value(page, "图文笔记一口价")
     if content_type == "视频":
