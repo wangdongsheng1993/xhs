@@ -15,6 +15,7 @@ MODE_OPTIONS = [
     ("品牌", "brand"),
     ("电商", "ecommerce"),
     ("KOC", "koc"),
+    ("蒸烤", "steam"),
 ]
 
 XLSX_FILE_TYPES = [("Excel files", "*.xlsx"), ("All files", "*.*")]
