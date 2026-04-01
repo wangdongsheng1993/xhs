@@ -44,9 +44,18 @@ from xhs_extractor import (
 )
 
 
-EXCEL_PATH = os.getenv("XHS_EXCEL_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1).xlsx").strip()
-OUTPUT_PATH = os.getenv("XHS_OUTPUT_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果.xlsx").strip()
-FALLBACK_OUTPUT_PATH = os.getenv("XHS_FALLBACK_OUTPUT_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果_自动保存.xlsx").strip()
+EXCEL_PATH = os.getenv(
+    "XHS_EXCEL_PATH",
+    r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1).xlsx",
+).strip()
+OUTPUT_PATH = os.getenv(
+    "XHS_OUTPUT_PATH",
+    r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果.xlsx",
+).strip()
+FALLBACK_OUTPUT_PATH = os.getenv(
+    "XHS_FALLBACK_OUTPUT_PATH",
+    r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表 副本 (1)_结果_自动保存.xlsx",
+).strip()
 SHEET_NAME = os.getenv("XHS_SHEET_NAME", "小红书电商-KOL").strip()
 SCREENSHOT_DIR = os.path.join(os.getcwd(), "ecom_screenshots")
 MAX_NOTE_PAGES = 20
@@ -244,7 +253,9 @@ def cleanup_dir(path):
 
 
 def header_map(ws):
-    return {ws.cell(row=1, column=col).value: col for col in range(1, ws.max_column + 1)}
+    return {
+        ws.cell(row=1, column=col).value: col for col in range(1, ws.max_column + 1)
+    }
 
 
 def set_cell(ws, headers, row_idx, header, value):
@@ -265,20 +276,29 @@ def get_cell_ref(headers, row_idx, header):
 
 
 def prepare_sheet_layout(ws, headers):
-    image_headers = ["性别占比（截图）", "粉丝年龄占比（截图）", "粉丝地域（截图）", "达人厨房图"]
+    image_headers = [
+        "性别占比（截图）",
+        "粉丝年龄占比（截图）",
+        "粉丝地域（截图）",
+        "达人厨房图",
+    ]
     for header in image_headers:
         col = headers.get(header)
         if col:
             ws.column_dimensions[get_column_letter(col)].width = 26
 
 
-def queue_image_for_cell(ws, headers, image_jobs, row_idx, header, image_path, width, height):
+def queue_image_for_cell(
+    ws, headers, image_jobs, row_idx, header, image_path, width, height
+):
     cell_ref = get_cell_ref(headers, row_idx, header)
     if not cell_ref or not image_path or not os.path.exists(image_path):
         return
     if not FORCE_REWRITE and not is_blank(ws[cell_ref].value):
         return
-    ws.row_dimensions[row_idx].height = max(ws.row_dimensions[row_idx].height or 15, height * 0.75)
+    ws.row_dimensions[row_idx].height = max(
+        ws.row_dimensions[row_idx].height or 15, height * 0.75
+    )
     ws[cell_ref].value = None
     image_jobs.append(
         {
@@ -352,9 +372,13 @@ def collect_recent_notes(page, api_cache, user_id):
         current_notes = current_data.get("list") or []
         notes.extend(current_notes)
 
-        oldest = parse_note_date(current_notes[-1].get("date")) if current_notes else None
+        oldest = (
+            parse_note_date(current_notes[-1].get("date")) if current_notes else None
+        )
         if DEBUG_VERBOSE:
-            print(f"    [DEBUG] 笔记页 {current_page}: {len(current_notes)} 条, oldest={oldest}")
+            print(
+                f"    [DEBUG] 笔记页 {current_page}: {len(current_notes)} 条, oldest={oldest}"
+            )
 
         if current_page >= min(total_pages, MAX_NOTE_PAGES):
             break
@@ -466,12 +490,24 @@ def infer_kol_topic_style(notes):
         # 明显带家电/家居产品词的合作或开箱内容，更偏测评类。
         if any(keyword.lower() in text for keyword in HOME_PRODUCT_KEYWORDS):
             scores["家装测评"] += 0.8 * weight
-        if note.get("isAdvertise") and any(keyword.lower() in text for keyword in HOME_PRODUCT_KEYWORDS):
+        if note.get("isAdvertise") and any(
+            keyword.lower() in text for keyword in HOME_PRODUCT_KEYWORDS
+        ):
             scores["家装测评"] += 1.2 * weight
 
         # 改造类如果标题里同时出现空间词和改造词，额外提高优先级。
         if any(keyword in text for keyword in ["改造", "爆改", "翻新", "焕新"]) and any(
-            keyword in text for keyword in ["客厅", "卧室", "厨房", "卫生间", "阳台", "玄关", "旧房", "家"]
+            keyword in text
+            for keyword in [
+                "客厅",
+                "卧室",
+                "厨房",
+                "卫生间",
+                "阳台",
+                "玄关",
+                "旧房",
+                "家",
+            ]
         ):
             scores["家装改造"] += 1.5 * weight
 
@@ -480,7 +516,9 @@ def infer_kol_topic_style(notes):
 
     # 同分时优先保留更具体的内容标签，最后才回到通用的家居美学。
     priority = ["家装改造", "家装测评", "干货分享", "话题类", "家居美学"]
-    best_label = max(priority, key=lambda label: (scores[label], -priority.index(label)))
+    best_label = max(
+        priority, key=lambda label: (scores[label], -priority.index(label))
+    )
     return best_label if scores.get(best_label, 0) > 0 else "家居美学"
 
 
@@ -492,7 +530,14 @@ def build_user_interest_text(fans_profile):
 
 def count_recent_30_notes(notes):
     cutoff = datetime.now().date() - timedelta(days=30)
-    return sum(1 for note in notes if (parse_note_date(note.get("date")) and parse_note_date(note.get("date")) >= cutoff))
+    return sum(
+        1
+        for note in notes
+        if (
+            parse_note_date(note.get("date"))
+            and parse_note_date(note.get("date")) >= cutoff
+        )
+    )
 
 
 def count_recent_90_hot_notes(notes):
@@ -583,7 +628,9 @@ def copy_note_link_from_case_detail(page, notes, target_note):
 
     try:
         # 这里要明确点“笔记案例”区域内的“合作笔记”筛选，而不是页面其他同名 Tab。
-        note_case_tab = get_first_visible(page.locator("#noteCase").get_by_text("合作笔记", exact=True))
+        note_case_tab = get_first_visible(
+            page.locator("#noteCase").get_by_text("合作笔记", exact=True)
+        )
         if note_case_tab:
             note_case_tab.click()
             page.wait_for_timeout(max(500, TAB_WAIT_MS))
@@ -594,11 +641,21 @@ def copy_note_link_from_case_detail(page, notes, target_note):
             pass
 
         # 在笔记案例区域里按标题精确找到目标卡片，再点它的封面区打开详情。
-        target_title = page.locator("#noteCase .note-card__title").filter(has_text=note_title).first
+        target_title = (
+            page.locator("#noteCase .note-card__title")
+            .filter(has_text=note_title)
+            .first
+        )
         if not target_title.count():
             return ""
 
-        note_mask = target_title.locator("xpath=ancestor::div[contains(@class,'note-card-wrapper')]").locator(".note-card__mask").first
+        note_mask = (
+            target_title.locator(
+                "xpath=ancestor::div[contains(@class,'note-card-wrapper')]"
+            )
+            .locator(".note-card__mask")
+            .first
+        )
         if not note_mask.count():
             return ""
 
@@ -616,7 +673,10 @@ def copy_note_link_from_case_detail(page, notes, target_note):
         copied = (copied or "").strip()
         try_close_note_detail(page)
 
-        if copied.startswith("https://www.xiaohongshu.com/explore/") and "xsec_token=" in copied:
+        if (
+            copied.startswith("https://www.xiaohongshu.com/explore/")
+            and "xsec_token=" in copied
+        ):
             return copied
         if copied.startswith("https://www.xiaohongshu.com/explore/"):
             return copied
@@ -727,8 +787,16 @@ def run_extraction():
 
     pending_rows = []
     for row_idx in range(2, ws.max_row + 1):
-        kol_name = ws.cell(row=row_idx, column=headers["KOL名称"]).value if headers.get("KOL名称") else ""
-        pgy_url = ws.cell(row=row_idx, column=headers["蒲公英链接"]).value if headers.get("蒲公英链接") else ""
+        kol_name = (
+            ws.cell(row=row_idx, column=headers["KOL名称"]).value
+            if headers.get("KOL名称")
+            else ""
+        )
+        pgy_url = (
+            ws.cell(row=row_idx, column=headers["蒲公英链接"]).value
+            if headers.get("蒲公英链接")
+            else ""
+        )
         if not pgy_url or not str(pgy_url).startswith("http"):
             continue
         if not should_process_row(row_idx, kol_name, len(pending_rows)):
@@ -751,9 +819,7 @@ def run_extraction():
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
-            user_data_dir=USER_DATA_DIR,
-            headless=False,
-            slow_mo=SLOW_MO_MS
+            user_data_dir=USER_DATA_DIR, headless=False, slow_mo=SLOW_MO_MS
         )
         page = context.new_page()
         api_cache = {}
@@ -762,7 +828,10 @@ def run_extraction():
             try:
                 url = response.url
                 content_type = response.headers.get("content-type", "")
-                if "application/json" not in content_type and "text/json" not in content_type:
+                if (
+                    "application/json" not in content_type
+                    and "text/json" not in content_type
+                ):
                     return
                 if "pgy.xiaohongshu.com/api/" not in url:
                     return
@@ -781,7 +850,11 @@ def run_extraction():
         print("=" * 50)
 
         try:
-            page.goto("https://pgy.xiaohongshu.com", wait_until="domcontentloaded", timeout=15000)
+            page.goto(
+                "https://pgy.xiaohongshu.com",
+                wait_until="domcontentloaded",
+                timeout=15000,
+            )
         except Exception:
             pass
 
@@ -790,10 +863,19 @@ def run_extraction():
         print("\n【步骤 2: 开始执行采集】")
         last_saved_path = OUTPUT_PATH
         processed_count = 0
+        fallback_rows = []
 
         for row_idx in range(2, ws.max_row + 1):
-            kol_name = ws.cell(row=row_idx, column=headers["KOL名称"]).value if headers.get("KOL名称") else ""
-            pgy_url = ws.cell(row=row_idx, column=headers["蒲公英链接"]).value if headers.get("蒲公英链接") else ""
+            kol_name = (
+                ws.cell(row=row_idx, column=headers["KOL名称"]).value
+                if headers.get("KOL名称")
+                else ""
+            )
+            pgy_url = (
+                ws.cell(row=row_idx, column=headers["蒲公英链接"]).value
+                if headers.get("蒲公英链接")
+                else ""
+            )
             if not pgy_url or not str(pgy_url).startswith("http"):
                 continue
 
@@ -805,7 +887,9 @@ def run_extraction():
                 for header, col in headers.items()
                 if header
             }
-            if not FORCE_REWRITE and has_all_values(row_snapshot, ECOM_COMPLETED_FIELDS):
+            if not FORCE_REWRITE and has_all_values(
+                row_snapshot, ECOM_COMPLETED_FIELDS
+            ):
                 print(f"\n>>> [{row_idx}/{ws.max_row}] 已有结果，跳过: {kol_name}")
                 continue
 
@@ -813,7 +897,13 @@ def run_extraction():
             api_cache.clear()
 
             try:
-                goto_with_retry(page, str(pgy_url), wait_until="domcontentloaded", timeout=30000, retries=2)
+                goto_with_retry(
+                    page,
+                    str(pgy_url),
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                    retries=2,
+                )
                 print("  - 蒲公英页已打开，等待关键信息加载...")
                 wait_for_profile_page_ready(page)
 
@@ -831,11 +921,20 @@ def run_extraction():
                 click_tab(page, "笔记数据")
 
                 blogger_data = get_json_with_cache(page, api_cache, blogger_api) or {}
-                fans_profile = get_json_with_cache(page, api_cache, fans_profile_api) or {}
-                coop_notes_detail = wait_for_cached_json_by_keyword(api_cache, coop_notes_keyword, timeout_ms=6000) or {}
+                fans_profile = (
+                    get_json_with_cache(page, api_cache, fans_profile_api) or {}
+                )
+                coop_notes_detail = (
+                    wait_for_cached_json_by_keyword(
+                        api_cache, coop_notes_keyword, timeout_ms=6000
+                    )
+                    or {}
+                )
 
                 try:
-                    summary_data = get_json_with_cache(page, api_cache, summary_api) or {}
+                    summary_data = (
+                        get_json_with_cache(page, api_cache, summary_api) or {}
+                    )
                 except Exception as summary_err:
                     summary_data = {}
                     print(f"  - 数据概览接口获取失败，已跳过中位数: {summary_err}")
@@ -843,7 +942,9 @@ def run_extraction():
                 notes = collect_recent_notes(page, api_cache, user_id)
                 chart_paths = capture_fans_analysis_images(
                     page,
-                    os.path.join(SCREENSHOT_DIR, f"row_{row_idx}_{sanitize_filename(user_id)}")
+                    os.path.join(
+                        SCREENSHOT_DIR, f"row_{row_idx}_{sanitize_filename(user_id)}"
+                    ),
                 )
 
                 red_id = blogger_data.get("redId", "")
@@ -851,7 +952,9 @@ def run_extraction():
                     set_cell(ws, headers, row_idx, "ID", red_id)
                     print(f"  - 抓取小红书号: {red_id}")
 
-                    homepage_url = get_homepage_url_from_profile_click(context, page, red_id)
+                    homepage_url = get_homepage_url_from_profile_click(
+                        context, page, red_id
+                    )
                     if homepage_url:
                         set_cell(ws, headers, row_idx, "主页链接", homepage_url)
                         print(f"  - 抓取主页链接: {homepage_url}")
@@ -861,36 +964,114 @@ def run_extraction():
                 fans_w = parse_page_w_value(fans_text)
                 set_cell(ws, headers, row_idx, "粉丝量（w）", fans_w)
                 set_cell(ws, headers, row_idx, "量级", get_level(fans_w))
-                set_cell(ws, headers, row_idx, "赞藏量（w）", parse_page_w_value(likes_text))
+                set_cell(
+                    ws, headers, row_idx, "赞藏量（w）", parse_page_w_value(likes_text)
+                )
 
                 kol_type = infer_kol_content_type(notes, blogger_data)
                 set_cell(ws, headers, row_idx, "KOL类型（图文/视频）", kol_type)
-                topic_style = infer_kol_topic_style(notes or ((coop_notes_detail or {}).get("list") or []))
-                set_cell(ws, headers, row_idx, "KOL类型（家居美学/家装测评/干货分享/家装改造/话题类）", topic_style)
+                topic_style = infer_kol_topic_style(
+                    notes or ((coop_notes_detail or {}).get("list") or [])
+                )
+                set_cell(
+                    ws,
+                    headers,
+                    row_idx,
+                    "KOL类型（家居美学/家装测评/干货分享/家装改造/话题类）",
+                    topic_style,
+                )
                 if kol_type == "图文":
-                    set_cell(ws, headers, row_idx, "平台价格", get_page_price_value(page, "图文笔记一口价"))
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "平台价格",
+                        get_page_price_value(page, "图文笔记一口价"),
+                    )
                 elif kol_type == "视频":
-                    set_cell(ws, headers, row_idx, "平台价格", get_page_price_value(page, "视频笔记一口价"))
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "平台价格",
+                        get_page_price_value(page, "视频笔记一口价"),
+                    )
 
                 gender_data = fans_profile.get("gender") or {}
                 age_data = fans_profile.get("ages") or []
                 device_data = fans_profile.get("devices") or []
-                set_cell(ws, headers, row_idx, "女粉占比", to_ratio_decimal(gender_data.get("female")))
-                set_cell(ws, headers, row_idx, "18-24年龄占比", to_ratio_decimal(find_percent(age_data, "18-24")))
-                set_cell(ws, headers, row_idx, "25-34年龄占比", to_ratio_decimal(find_percent(age_data, "25-34")))
-                set_cell(ws, headers, row_idx, "35-44年龄占比", to_ratio_decimal(find_percent(age_data, "35-44")))
-                set_cell(ws, headers, row_idx, "苹果用户占比", to_ratio_decimal(find_percent(device_data, ["apple inc.", "apple", "苹果"])))
-                set_cell(ws, headers, row_idx, "华为用户占比", to_ratio_decimal(find_percent(device_data, ["huawei", "华为"])))
+                set_cell(
+                    ws,
+                    headers,
+                    row_idx,
+                    "女粉占比",
+                    to_ratio_decimal(gender_data.get("female")),
+                )
+                set_cell(
+                    ws,
+                    headers,
+                    row_idx,
+                    "18-24年龄占比",
+                    to_ratio_decimal(find_percent(age_data, "18-24")),
+                )
+                set_cell(
+                    ws,
+                    headers,
+                    row_idx,
+                    "25-34年龄占比",
+                    to_ratio_decimal(find_percent(age_data, "25-34")),
+                )
+                set_cell(
+                    ws,
+                    headers,
+                    row_idx,
+                    "35-44年龄占比",
+                    to_ratio_decimal(find_percent(age_data, "35-44")),
+                )
+                set_cell(
+                    ws,
+                    headers,
+                    row_idx,
+                    "苹果用户占比",
+                    to_ratio_decimal(
+                        find_percent(device_data, ["apple inc.", "apple", "苹果"])
+                    ),
+                )
+                set_cell(
+                    ws,
+                    headers,
+                    row_idx,
+                    "华为用户占比",
+                    to_ratio_decimal(find_percent(device_data, ["huawei", "华为"])),
+                )
 
                 col_read = "近30天预估阅读量\n(近30天阅读中位数）"
                 col_interact = "近30天互动量\n（近30天互动中位）"
-                fallback_read, fallback_interact = get_notes_median_fallback(coop_notes_detail, top_n=4)
+                fallback_read, fallback_interact = get_notes_median_fallback(
+                    coop_notes_detail, top_n=4
+                )
                 read_value = summary_data.get("mValidRawReadFeedNum", 0) or 0
                 interact_value = summary_data.get("mEngagementNum", 0) or 0
                 if not read_value:
                     read_value = fallback_read
+                    fallback_rows.append(
+                        {
+                            "row": row_idx,
+                            "kol": kol_name,
+                            "field": "阅读",
+                            "fallback": fallback_read,
+                        }
+                    )
                 if not interact_value:
                     interact_value = fallback_interact
+                    fallback_rows.append(
+                        {
+                            "row": row_idx,
+                            "kol": kol_name,
+                            "field": "互动",
+                            "fallback": fallback_interact,
+                        }
+                    )
                 set_cell(ws, headers, row_idx, col_read, read_value)
                 set_cell(ws, headers, row_idx, col_interact, interact_value)
 
@@ -901,17 +1082,27 @@ def run_extraction():
                 set_cell(ws, headers, row_idx, "近30天笔记数量", note_count_30)
                 set_cell(ws, headers, row_idx, "近90天爆文篇数", hot_count_90)
 
-                set_cell(ws, headers, row_idx, "用户兴趣", build_user_interest_text(fans_profile))
+                set_cell(
+                    ws,
+                    headers,
+                    row_idx,
+                    "用户兴趣",
+                    build_user_interest_text(fans_profile),
+                )
 
-                reference_note = pick_reference_case_note((coop_notes_detail or {}).get("list") or [])
+                reference_note = pick_reference_case_note(
+                    (coop_notes_detail or {}).get("list") or []
+                )
                 if reference_note:
                     reference_link = copy_note_link_from_case_detail(
                         page,
                         (coop_notes_detail or {}).get("list") or [],
-                        reference_note
+                        reference_note,
                     )
                     if not reference_link:
-                        reference_link = build_note_link_from_note_id(reference_note.get("noteId"))
+                        reference_link = build_note_link_from_note_id(
+                            reference_note.get("noteId")
+                        )
                     if reference_link:
                         set_cell(ws, headers, row_idx, "参考案例", reference_link)
 
@@ -932,7 +1123,7 @@ def run_extraction():
                     kitchen_path = os.path.join(
                         SCREENSHOT_DIR,
                         f"row_{row_idx}_{sanitize_filename(user_id)}",
-                        "kitchen.png"
+                        "kitchen.png",
                     )
                     if download_image(kitchen_note.get("imgUrl"), kitchen_path):
                         queue_image_for_cell(
@@ -943,12 +1134,20 @@ def run_extraction():
                             "达人厨房图",
                             kitchen_path,
                             170,
-                            120
+                            120,
                         )
                     else:
-                        set_cell(ws, headers, row_idx, "达人厨房图", "整体厨房图建联博主后给到")
+                        set_cell(
+                            ws,
+                            headers,
+                            row_idx,
+                            "达人厨房图",
+                            "整体厨房图建联博主后给到",
+                        )
                 else:
-                    set_cell(ws, headers, row_idx, "达人厨房图", "整体厨房图建联博主后给到")
+                    set_cell(
+                        ws, headers, row_idx, "达人厨房图", "整体厨房图建联博主后给到"
+                    )
 
             except Exception as e:
                 print(f"  - 电商表数据抓取失败: {e}")
@@ -961,6 +1160,22 @@ def run_extraction():
         last_saved_path = save_progress(wb, OUTPUT_PATH, processed_count)
         context.close()
         cleanup_dir(SCREENSHOT_DIR)
+
+    if fallback_rows:
+        unique_rows = {}
+        for item in fallback_rows:
+            row = item["row"]
+            if row not in unique_rows:
+                unique_rows[row] = item
+        print(
+            f"\n⚠️  以下 {len(unique_rows)} 行走了 fallback（接口返回0，重试后仍失败）："
+        )
+        print(f"{'Excel行号':<10} {'KOL名称':<20} {'字段':<8} {'fallback值':<12}")
+        print("-" * 55)
+        for row, item in unique_rows.items():
+            print(
+                f"{item['row']:<10} {item['kol'][:18]:<20} {item['field']:<8} {item['fallback']:<12.0f}"
+            )
 
     print(f"\n[完成] 所有任务处理完毕！结果已保存到:\n  {last_saved_path}")
 

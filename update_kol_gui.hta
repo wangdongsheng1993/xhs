@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>KOL数据更新工具</title>
+    <HTA:APPLICATION
+        APPLICATIONNAME="KOL数据更新工具"
+        SCROLL="no"
+        SINGLEINSTANCE="yes"
+    />
+    <style>
+        body {
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f0f2f5;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            max-width: 520px;
+            margin: 0 auto;
+        }
+        h2 {
+            text-align: center;
+            color: #1a1a1a;
+            margin-bottom: 25px;
+            font-size: 20px;
+        }
+        .form-group {
+            margin-bottom: 18px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: bold;
+            color: #444;
+            font-size: 14px;
+        }
+        input[type="text"], select {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #4a90d9;
+            box-shadow: 0 0 0 2px rgba(74,144,217,0.1);
+        }
+        .btn-row {
+            display: flex;
+            gap: 12px;
+            margin-top: 25px;
+        }
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 15px;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .btn-primary {
+            background: #4a90d9;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #357abd;
+        }
+        .btn-primary:disabled {
+            background: #a0c4e8;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        #status {
+            margin-top: 18px;
+            text-align: center;
+            font-size: 13px;
+            min-height: 24px;
+            line-height: 1.5;
+        }
+        .note {
+            font-size: 11px;
+            color: #999;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>KOL/KOC 数据更新工具</h2>
+
+        <div class="form-group">
+            <label>Excel 文件路径</label>
+            <input type="text" id="excelFile" placeholder="请粘贴Excel文件完整路径">
+            <div class="note">例如: C:\xxx\【抖音电商&深演智能】老板电器C5 3~4月执行表.xlsx</div>
+        </div>
+
+        <div class="form-group">
+            <label>达人名称</label>
+            <input type="text" id="kolName" placeholder="请输入要更新的达人名称">
+        </div>
+
+        <div class="form-group">
+            <label>来源类型</label>
+            <select id="sourceType">
+                <option value="KOL">KOL (来自抖音提报-KOL sheet)</option>
+                <option value="KOC">KOC (来自抖音提报-KOC sheet)</option>
+            </select>
+        </div>
+
+        <div class="btn-row">
+            <button onclick="RunScript()" id="runBtn" class="btn-primary">执行更新</button>
+            <button onclick="window.close()" class="btn-secondary">关闭</button>
+        </div>
+
+        <div id="status"></div>
+    </div>
+
+    <script>
+        function RunScript() {
+            var excelFile = document.getElementById("excelFile").value.trim();
+            var kolName = document.getElementById("kolName").value.trim();
+            var sourceType = document.getElementById("sourceType").value;
+
+            if (!excelFile) {
+                document.getElementById("status").innerHTML = '<font color="red">请输入Excel文件路径！</font>';
+                return;
+            }
+            if (!kolName) {
+                document.getElementById("status").innerHTML = '<font color="red">请输入达人名称！</font>';
+                return;
+            }
+
+            document.getElementById("status").innerHTML = "正在执行更新，请稍候...";
+            document.getElementById("runBtn").disabled = true;
+
+            var sh = new ActiveXObject("WScript.Shell");
+            var fso = new ActiveXObject("Scripting.FileSystemObject");
+
+            var scriptPath = fso.GetParentFolderName(window.location.pathname);
+            var pyScript = scriptPath + "\\update_kol_to_execute.py";
+
+            var cmd = 'cmd /c python "' + pyScript + '" "' + excelFile + '" "' + kolName + '" ' + sourceType + ' 2>&1';
+
+            try {
+                var oExec = sh.Exec(cmd);
+                var output = "";
+
+                // 轮询获取输出
+                var waitCount = 0;
+                while (oExec.Status === 0 && waitCount < 200) {
+                    if (!oExec.StdOut.AtEndOfStream) {
+                        output += oExec.StdOut.ReadAll();
+                    }
+                    waitCount++;
+                }
+                // 最后读取一次
+                if (!oExec.StdOut.AtEndOfStream) output += oExec.StdOut.ReadAll();
+                if (!oExec.Stderr.AtEndOfStream) output += oExec.Stderr.ReadAll();
+
+                // 判断执行结果
+                if (output.indexOf("已保存") !== -1 || output.indexOf("成功") !== -1) {
+                    document.getElementById("status").innerHTML = '<font color="green">执行成功！</font><br><pre style="text-align:left;font-size:11px;max-height:120px;overflow:auto;background:#f9f9f9;padding:8px;border-radius:4px;margin-top:8px;">' + output + '</pre>';
+                } else {
+                    document.getElementById("status").innerHTML = '<font color="red">执行完成，请查看输出</font><br><pre style="text-align:left;font-size:11px;max-height:120px;overflow:auto;background:#fff3f3;padding:8px;border-radius:4px;margin-top:8px;">' + output + '</pre>';
+                }
+            } catch(err) {
+                document.getElementById("status").innerHTML = '<font color="red">执行失败: ' + err.description + '</font>';
+            }
+
+            document.getElementById("runBtn").disabled = false;
+        }
+    </script>
+</body>
+</html>

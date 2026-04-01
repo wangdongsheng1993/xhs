@@ -7,8 +7,9 @@ import statistics
 import shutil
 import urllib.request
 from openpyxl import load_workbook
-from openpyxl.utils.cell import get_column_letter
-from openpyxl.drawing.image import XLImage
+from openpyxl.utils.cell import get_column_letter, coordinate_to_tuple
+from openpyxl.drawing.image import Image as XLImage
+from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor
 from playwright.sync_api import sync_playwright
 
 
@@ -40,8 +41,13 @@ def get_env_bool(name, default):
 
 
 # --- 配置区 ---
-EXCEL_PATH = os.getenv("XHS_EXCEL_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表.xlsx").strip()
-OUTPUT_PATH = os.getenv("XHS_OUTPUT_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表_结果.xlsx").strip()
+EXCEL_PATH = os.getenv(
+    "XHS_EXCEL_PATH", r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表.xlsx"
+).strip()
+OUTPUT_PATH = os.getenv(
+    "XHS_OUTPUT_PATH",
+    r"c:\code_20251212\AI\xhs\【内部深演智能】老板电器C5 提号表_结果.xlsx",
+).strip()
 SHEET_NAME = os.getenv("XHS_SHEET_NAME", "蒸烤KOL").strip()
 # 浏览器数据目录，用于保存登录状态
 USER_DATA_DIR = os.path.join(os.getcwd(), "browser_session")
@@ -91,6 +97,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 # ============== 通用工具函数 ==============
 
+
 def sanitize_filename(text):
     text = re.sub(r'[\\/:*?"<>|]+', "_", str(text))
     return text[:80] or "unknown"
@@ -110,7 +117,9 @@ def cleanup_dir(path):
 
 
 def header_map(ws):
-    return {ws.cell(row=1, column=col).value: col for col in range(1, ws.max_column + 1)}
+    return {
+        ws.cell(row=1, column=col).value: col for col in range(1, ws.max_column + 1)
+    }
 
 
 def is_blank(value):
@@ -158,13 +167,17 @@ def prepare_sheet_layout(ws, headers):
             ws.column_dimensions[get_column_letter(col)].width = 26
 
 
-def queue_image_for_cell(ws, headers, image_jobs, row_idx, header, image_path, width, height):
+def queue_image_for_cell(
+    ws, headers, image_jobs, row_idx, header, image_path, width, height
+):
     cell_ref = get_cell_ref(headers, row_idx, header)
     if not cell_ref or not image_path or not os.path.exists(image_path):
         return
     if not FORCE_REWRITE and not is_blank(ws[cell_ref].value):
         return
-    ws.row_dimensions[row_idx].height = max(ws.row_dimensions[row_idx].height or 15, height * 0.75)
+    ws.row_dimensions[row_idx].height = max(
+        ws.row_dimensions[row_idx].height or 15, height * 0.75
+    )
     ws[cell_ref].value = None
     image_jobs.append(
         {
@@ -185,8 +198,7 @@ def apply_image_jobs(ws, image_jobs):
             img = XLImage(job["image_path"])
             img.width = job["width"]
             img.height = job["height"]
-            img.anchor = ws[job["cell_ref"]]
-            ws._images.append(img)
+            ws.add_image(img, job["cell_ref"])
         except Exception:
             pass
 
@@ -213,6 +225,7 @@ def save_progress(wb, output_path, processed_count):
 
 # ============== 复用自 xhs_extractor 的函数 ==============
 
+
 def wait_for_profile_page_ready(page, timeout_ms=PAGE_READY_TIMEOUT_MS):
     selectors = [
         ".blogger-data__item",
@@ -236,12 +249,18 @@ def wait_for_profile_page_ready(page, timeout_ms=PAGE_READY_TIMEOUT_MS):
 
 
 def parse_w_value(text):
-    if not text or text == '-':
+    if not text or text == "-":
         return 0.0
-    text = text.replace('w', '').replace('万', '').replace('+', '').replace(',', '').strip()
+    text = (
+        text.replace("w", "")
+        .replace("万", "")
+        .replace("+", "")
+        .replace(",", "")
+        .strip()
+    )
     try:
-        if 'k' in text.lower():
-            return float(text.lower().replace('k', '')) / 10
+        if "k" in text.lower():
+            return float(text.lower().replace("k", "")) / 10
         return float(text)
     except Exception:
         return 0.0
@@ -313,7 +332,7 @@ def wait_for_login_confirmation():
 
 
 def extract_user_id_from_pgy_url(url):
-    match = re.search(r'/blogger-detail/([^/?]+)', str(url))
+    match = re.search(r"/blogger-detail/([^/?]+)", str(url))
     return match.group(1) if match else None
 
 
@@ -331,7 +350,7 @@ def fetch_json(page, url):
             return { ok: response.ok, status: response.status, text };
         }
         """,
-        url
+        url,
     )
     if not result.get("ok"):
         raise Exception(f"接口请求失败: {url} (HTTP {result.get('status')})")
@@ -341,7 +360,9 @@ def fetch_json(page, url):
         raise Exception(f"接口返回非 JSON: {url} ({e})")
     if isinstance(payload, dict):
         if payload.get("code") not in (None, 0):
-            raise Exception(f"接口返回异常: {url} code={payload.get('code')} msg={payload.get('msg')}")
+            raise Exception(
+                f"接口返回异常: {url} code={payload.get('code')} msg={payload.get('msg')}"
+            )
         if payload.get("success") is False:
             raise Exception(f"接口返回失败: {url} msg={payload.get('msg')}")
         if "data" in payload:
@@ -353,7 +374,9 @@ def get_cached_json(api_cache, url):
     payload = api_cache.get(url)
     if isinstance(payload, dict):
         if payload.get("code") not in (None, 0):
-            raise Exception(f"接口返回异常: {url} code={payload.get('code')} msg={payload.get('msg')}")
+            raise Exception(
+                f"接口返回异常: {url} code={payload.get('code')} msg={payload.get('msg')}"
+            )
         if payload.get("success") is False:
             raise Exception(f"接口返回失败: {url} msg={payload.get('msg')}")
         if "data" in payload:
@@ -412,8 +435,9 @@ def find_percent(items, targets, name_keys=("group", "name", "desc")):
 
 
 def get_page_data_value(page, label):
-    return page.evaluate(
-        """
+    return (
+        page.evaluate(
+            """
         (label) => {
             const labels = Array.from(document.querySelectorAll('.blogger-data__label'));
             const labelEl = labels.find(el => (el.textContent || '').trim() === label);
@@ -423,13 +447,16 @@ def get_page_data_value(page, label):
             return valueEl ? (valueEl.textContent || '').trim() : '';
         }
         """,
-        label
-    ) or ""
+            label,
+        )
+        or ""
+    )
 
 
 def get_page_price_value(page, label):
-    text = page.evaluate(
-        """
+    text = (
+        page.evaluate(
+            """
         (label) => {
             const labels = Array.from(document.querySelectorAll('.price-box span'));
             const labelEl = labels.find(el => (el.textContent || '').trim() === label);
@@ -439,8 +466,10 @@ def get_page_price_value(page, label):
             return priceEl ? (priceEl.textContent || '').trim() : '';
         }
         """,
-        label
-    ) or ""
+            label,
+        )
+        or ""
+    )
     price_text = re.sub(r"[^\d.]", "", text)
     return float(price_text) if price_text else 0.0
 
@@ -477,7 +506,14 @@ def _to_number(value):
 
 
 def get_note_read_count(note):
-    for key in ("readNum", "readCount", "readingNum", "read", "exposureNum", "impressionNum"):
+    for key in (
+        "readNum",
+        "readCount",
+        "readingNum",
+        "read",
+        "exposureNum",
+        "impressionNum",
+    ):
         value = _to_number((note or {}).get(key))
         if value > 0:
             return value
@@ -701,8 +737,16 @@ def run_extraction():
 
     pending_rows = []
     for row_idx in range(2, ws.max_row + 1):
-        kol_name = ws.cell(row=row_idx, column=headers["KOL名称"]).value if headers.get("KOL名称") else ""
-        pgy_url = ws.cell(row=row_idx, column=headers["蒲公英链接"]).value if headers.get("蒲公英链接") else ""
+        kol_name = (
+            ws.cell(row=row_idx, column=headers["KOL名称"]).value
+            if headers.get("KOL名称")
+            else ""
+        )
+        pgy_url = (
+            ws.cell(row=row_idx, column=headers["蒲公英链接"]).value
+            if headers.get("蒲公英链接")
+            else ""
+        )
         if not pgy_url or not str(pgy_url).startswith("http"):
             continue
         if not should_process_row(row_idx, kol_name, len(pending_rows)):
@@ -725,9 +769,7 @@ def run_extraction():
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
-            user_data_dir=USER_DATA_DIR,
-            headless=False,
-            slow_mo=SLOW_MO_MS
+            user_data_dir=USER_DATA_DIR, headless=False, slow_mo=SLOW_MO_MS
         )
         page = context.new_page()
         api_cache = {}
@@ -736,7 +778,10 @@ def run_extraction():
             try:
                 url = response.url
                 content_type = response.headers.get("content-type", "")
-                if "application/json" not in content_type and "text/json" not in content_type:
+                if (
+                    "application/json" not in content_type
+                    and "text/json" not in content_type
+                ):
                     return
                 if "pgy.xiaohongshu.com/api/" not in url:
                     return
@@ -755,7 +800,11 @@ def run_extraction():
         print("=" * 50)
 
         try:
-            page.goto("https://pgy.xiaohongshu.com", wait_until="domcontentloaded", timeout=15000)
+            page.goto(
+                "https://pgy.xiaohongshu.com",
+                wait_until="domcontentloaded",
+                timeout=15000,
+            )
         except Exception:
             pass
 
@@ -773,17 +822,32 @@ def run_extraction():
 
         processed_count = 0
         last_saved_path = OUTPUT_PATH
+        fallback_rows = []
 
         for row_idx in pending_rows:
-            kol_name = ws.cell(row=row_idx, column=headers["KOL名称"]).value if headers.get("KOL名称") else f"Row {row_idx}"
+            kol_name = (
+                ws.cell(row=row_idx, column=headers["KOL名称"]).value
+                if headers.get("KOL名称")
+                else f"Row {row_idx}"
+            )
             print(f"\n>>> [{row_idx}/{ws.max_row}] 正在处理: {kol_name}")
 
-            pgy_url = ws.cell(row=row_idx, column=headers["蒲公英链接"]).value if headers.get("蒲公英链接") else ""
+            pgy_url = (
+                ws.cell(row=row_idx, column=headers["蒲公英链接"]).value
+                if headers.get("蒲公英链接")
+                else ""
+            )
             if not pgy_url or not str(pgy_url).startswith("http"):
                 continue
 
             try:
-                goto_with_retry(page, pgy_url, wait_until="domcontentloaded", timeout=30000, retries=2)
+                goto_with_retry(
+                    page,
+                    pgy_url,
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                    retries=2,
+                )
                 print("  - 蒲公英页已打开，等待关键信息加载...")
                 wait_for_profile_page_ready(page)
 
@@ -799,14 +863,25 @@ def run_extraction():
                 notes_detail_keyword = build_notes_detail_keyword(user_id, 1)
 
                 blogger_data = get_json_with_cache(page, api_cache, blogger_api) or {}
-                fans_profile = get_json_with_cache(page, api_cache, fans_profile_api) or {}
-                notes_detail = find_cached_json_by_keyword(api_cache, notes_detail_keyword) or {}
+                fans_profile = (
+                    get_json_with_cache(page, api_cache, fans_profile_api) or {}
+                )
+                notes_detail = (
+                    find_cached_json_by_keyword(api_cache, notes_detail_keyword) or {}
+                )
                 if not notes_detail:
                     open_brand_note_tabs(page)
-                    notes_detail = wait_for_cached_json_by_keyword(api_cache, notes_detail_keyword, timeout_ms=6000) or {}
+                    notes_detail = (
+                        wait_for_cached_json_by_keyword(
+                            api_cache, notes_detail_keyword, timeout_ms=6000
+                        )
+                        or {}
+                    )
 
                 try:
-                    summary_data = get_json_with_cache(page, api_cache, summary_api) or {}
+                    summary_data = (
+                        get_json_with_cache(page, api_cache, summary_api) or {}
+                    )
                 except Exception as summary_err:
                     summary_data = {}
                     print(f"  - 数据概览接口获取失败，已跳过中位数: {summary_err}")
@@ -818,7 +893,9 @@ def run_extraction():
                         set_cell(ws, headers, row_idx, "ID", red_id)
                     print(f"  - 抓取小红书号: {red_id}")
 
-                    homepage_url = get_homepage_url_from_profile_click(context, page, red_id)
+                    homepage_url = get_homepage_url_from_profile_click(
+                        context, page, red_id
+                    )
                     if homepage_url:
                         set_cell(ws, headers, row_idx, "主页链接", homepage_url)
                         print(f"  - 抓取主页链接: {homepage_url}")
@@ -830,44 +907,106 @@ def run_extraction():
                 if headers.get("粉丝量（W）"):
                     set_cell(ws, headers, row_idx, "粉丝量（W）", fans_w)
                 if headers.get("赞藏量（W）"):
-                    set_cell(ws, headers, row_idx, "赞藏量（W）", parse_page_w_value(likes_text))
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "赞藏量（W）",
+                        parse_page_w_value(likes_text),
+                    )
 
                 # 平台价格与合作形式
-                cooperation_form = infer_cooperation_form_from_notes(notes_detail, blogger_data)
+                cooperation_form = infer_cooperation_form_from_notes(
+                    notes_detail, blogger_data
+                )
                 if cooperation_form and headers.get("合作形式"):
                     set_cell(ws, headers, row_idx, "合作形式", cooperation_form)
                 if cooperation_form == "图文" and headers.get("平台价格"):
-                    set_cell(ws, headers, row_idx, "平台价格", get_page_price_value(page, "图文笔记一口价"))
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "平台价格",
+                        get_page_price_value(page, "图文笔记一口价"),
+                    )
                 elif cooperation_form == "视频" and headers.get("平台价格"):
-                    set_cell(ws, headers, row_idx, "平台价格", get_page_price_value(page, "视频笔记一口价"))
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "平台价格",
+                        get_page_price_value(page, "视频笔记一口价"),
+                    )
 
                 # 粉丝画像
                 gender_data = fans_profile.get("gender") or {}
                 age_data = fans_profile.get("ages") or []
 
                 if headers.get("女粉占比"):
-                    set_cell(ws, headers, row_idx, "女粉占比", to_ratio_decimal(gender_data.get("female")))
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "女粉占比",
+                        to_ratio_decimal(gender_data.get("female")),
+                    )
                 if headers.get("18-24年龄占比"):
-                    set_cell(ws, headers, row_idx, "18-24年龄占比", to_ratio_decimal(find_percent(age_data, "18-24")))
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "18-24年龄占比",
+                        to_ratio_decimal(find_percent(age_data, "18-24")),
+                    )
                 if headers.get("25-34年龄占比"):
-                    set_cell(ws, headers, row_idx, "25-34年龄占比", to_ratio_decimal(find_percent(age_data, "25-34")))
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "25-34年龄占比",
+                        to_ratio_decimal(find_percent(age_data, "25-34")),
+                    )
                 if headers.get("35-44年龄占比"):
-                    set_cell(ws, headers, row_idx, "35-44年龄占比", to_ratio_decimal(find_percent(age_data, "35-44")))
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "35-44年龄占比",
+                        to_ratio_decimal(find_percent(age_data, "35-44")),
+                    )
 
                 # 数据概览中位数
                 notes_list = (notes_detail or {}).get("list", [])
-                fallback_read, fallback_interact = get_notes_median_fallback(notes_detail, top_n=4)
+                fallback_read, fallback_interact = get_notes_median_fallback(
+                    notes_detail, top_n=4
+                )
 
                 if headers.get("近30天阅读中位数"):
                     read_value = summary_data.get("mValidRawReadFeedNum", 0) or 0
                     if not read_value:
                         read_value = fallback_read
+                        fallback_rows.append(
+                            {
+                                "row": row_idx,
+                                "kol": kol_name,
+                                "field": "阅读",
+                                "fallback": fallback_read,
+                            }
+                        )
                     set_cell(ws, headers, row_idx, "近30天阅读中位数", read_value)
 
                 if headers.get("近30天互动中位"):
                     interact_value = summary_data.get("mEngagementNum", 0) or 0
                     if not interact_value:
                         interact_value = fallback_interact
+                        fallback_rows.append(
+                            {
+                                "row": row_idx,
+                                "kol": kol_name,
+                                "field": "互动",
+                                "fallback": fallback_interact,
+                            }
+                        )
                     set_cell(ws, headers, row_idx, "近30天互动中位", interact_value)
 
                 # 厨房场景图
@@ -877,7 +1016,7 @@ def run_extraction():
                         kitchen_path = os.path.join(
                             SCREENSHOT_DIR,
                             f"row_{row_idx}_{sanitize_filename(user_id)}",
-                            "kitchen.png"
+                            "kitchen.png",
                         )
                         if download_image(kitchen_note.get("imgUrl"), kitchen_path):
                             queue_image_for_cell(
@@ -888,12 +1027,26 @@ def run_extraction():
                                 "厨房场景图",
                                 kitchen_path,
                                 170,
-                                120
+                                120,
                             )
                             print(f"  - 抓取厨房场景图: {kitchen_path}")
                         else:
+                            set_cell(
+                                ws,
+                                headers,
+                                row_idx,
+                                "厨房场景图",
+                                "整体厨房图建联博主后给到",
+                            )
                             print(f"  - 厨房场景图下载失败")
                     else:
+                        set_cell(
+                            ws,
+                            headers,
+                            row_idx,
+                            "厨房场景图",
+                            "整体厨房图建联博主后给到",
+                        )
                         print(f"  - 未找到厨房相关笔记")
 
             except Exception as e:
@@ -907,6 +1060,22 @@ def run_extraction():
         last_saved_path = save_progress(wb, OUTPUT_PATH, processed_count)
         context.close()
         cleanup_dir(SCREENSHOT_DIR)
+
+    if fallback_rows:
+        unique_rows = {}
+        for item in fallback_rows:
+            row = item["row"]
+            if row not in unique_rows:
+                unique_rows[row] = item
+        print(
+            f"\n⚠️  以下 {len(unique_rows)} 行走了 fallback（接口返回0，重试后仍失败）："
+        )
+        print(f"{'Excel行号':<10} {'KOL名称':<20} {'字段':<8} {'fallback值':<12}")
+        print("-" * 55)
+        for row, item in unique_rows.items():
+            print(
+                f"{item['row']:<10} {item['kol'][:18]:<20} {item['field']:<8} {item['fallback']:<12.0f}"
+            )
 
     print(f"\n[完成] 所有任务处理完毕！结果已保存到:\n  {last_saved_path}")
 
