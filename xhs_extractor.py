@@ -442,6 +442,23 @@ def infer_cooperation_form_from_notes(notes_data, blogger_data):
     return ""
 
 
+def get_kol_type_from_page(page):
+    """从页面 .blogger-tag-list 提取第一个标签作为 KOL 类型"""
+    return (
+        page.evaluate(
+            """
+            () => {
+                const tagList = document.querySelector('.blogger-tag-list');
+                if (!tagList) return '';
+                const firstTag = tagList.querySelector('span, li, a, div');
+                return firstTag ? (firstTag.textContent || '').trim() : '';
+            }
+            """
+        )
+        or ""
+    )
+
+
 def _to_number(value):
     """把接口里的各种数值安全转成数字，失败时返回 0。"""
     try:
@@ -702,6 +719,7 @@ BRAND_COMPLETED_FIELDS = [
     "主页链接",
     "粉丝量（w）",
     "量级",
+    "KOL类型",
     "平台价格",
     "女粉占比",
     "18-24年龄占比",
@@ -739,6 +757,7 @@ def run_extraction():
             "苹果用户占比",
             "华为用户占比",
             "合作形式",
+            "KOL类型",
         ]:
             if col in df.columns:
                 df[col] = df[col].astype(object)
@@ -940,6 +959,12 @@ def run_extraction():
                         parse_page_w_value(likes_text),
                         updated_cells,
                     )
+
+                    # KOL类型
+                    kol_type = get_kol_type_from_page(page)
+                    if kol_type:
+                        assign_df_value(df, index, "KOL类型", kol_type, updated_cells)
+                        print(f"  - 抓取KOL类型: {kol_type}")
 
                     # 平台价格与合作形式
                     cooperation_form = infer_cooperation_form_from_notes(

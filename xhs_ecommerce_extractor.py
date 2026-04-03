@@ -30,6 +30,7 @@ from xhs_extractor import (
     get_first_visible,
     get_homepage_url_from_profile_click,
     get_json_with_cache,
+    get_kol_type_from_page,
     get_level,
     matches_debug_row,
     get_notes_median_fallback,
@@ -970,16 +971,16 @@ def run_extraction():
 
                 kol_type = infer_kol_content_type(notes, blogger_data)
                 set_cell(ws, headers, row_idx, "KOL类型（图文/视频）", kol_type)
-                topic_style = infer_kol_topic_style(
-                    notes or ((coop_notes_detail or {}).get("list") or [])
-                )
-                set_cell(
-                    ws,
-                    headers,
-                    row_idx,
-                    "KOL类型（家居美学/家装测评/干货分享/家装改造/话题类）",
-                    topic_style,
-                )
+                topic_style = get_kol_type_from_page(page)
+                if topic_style:
+                    set_cell(
+                        ws,
+                        headers,
+                        row_idx,
+                        "KOL类型（家居美学/家装测评/干货分享/家装改造/话题类）",
+                        topic_style,
+                    )
+                    print(f"  - 抓取KOL类型: {topic_style}")
                 if kol_type == "图文":
                     set_cell(
                         ws,
