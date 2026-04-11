@@ -1,39 +1,64 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repository is a small Windows-first Python toolkit for scraping Xiaohongshu Pugongying data into Excel workbooks. Keep source files at the repo root:
+This repository is a Windows-first Python workspace for Xiaohongshu/抖音 data scripts, now split by business scenario.
 
-- `xhs_excel_runner.py`: main CLI entry point; dispatches `brand`, `ecommerce`, and `koc` runs.
-- `xhs_extractor.py`: brand-sheet Excel flow.
-- `xhs_ecommerce_extractor.py`: ecommerce-sheet Excel flow and image insertion.
-- `xhs_koc_extractor.py`: KOC-sheet Excel flow.
-- `xhs_*_feishu.py`: Feishu-only variants for smaller online updates.
-- `browser_session/`, `ecom_screenshots/`, `koc_screenshots/`: runtime artifacts; do not treat as source.
+- `data_handle/`: 本地 Excel 抓取与处理主流程
+  - `xhs_excel_runner.py`: CLI 入口（品牌/电商/KOC）
+  - `xhs_extractor.py`, `xhs_ecommerce_extractor.py`, `xhs_koc_extractor.py`, `xhs_steam_kol_extractor.py`
+  - `xhs_gui_launcher.py`, `launch_gui.bat`
+- `dianshang_xiaohongshu_sync/`: 电商小红书飞书表同步
+  - `sync_kol_execute.py`, `sync_kol_execute_gui.py`, `run_sync_kol.bat`, `dianshang-xiaohongshu.md`
+- `pinpai_xiaohongshu_douyin_sync/`: 品牌小红书&抖音飞书表同步
+  - `sync_machine_plan.py`, `lark_sync_gui.py`, `lark_sync.bat`, `requirement.md`
+- Root-level helpers:
+  - `xhs_extractor_feishu.py`, `xhs_ecommerce_extractor_feishu.py`
+  - `update_kol_to_execute.py`, `run_update_kol.bat`, `update_kol_gui.hta`
+
+Keep runtime artifacts (screenshots, temp outputs, browser sessions) out of source control.
 
 ## Build, Test, and Development Commands
-Use PowerShell from the repository root.
+Use PowerShell from repo root.
 
 - `python -m venv .venv`
-  Creates a local virtual environment.
 - `.venv\Scripts\Activate.ps1`
-  Activates the environment on Windows.
 - `pip install pandas openpyxl playwright`
-  Installs the libraries used by the scripts.
 - `python -m playwright install chromium`
-  Installs the browser required by `launch_persistent_context(...)`.
-- `python xhs_excel_runner.py 品牌 395-421 --excel "<input.xlsx>" --output "<result.xlsx>"`
-  Runs the recommended local Excel workflow for brand sheets.
-- `python -m compileall .`
-  Fast syntax check before committing when no automated test suite exists.
+- Excel flow example:
+  - `python data_handle\xhs_excel_runner.py 品牌 395-421 --excel "<input.xlsx>" --output "<result.xlsx>"`
+- 电商小红书飞书同步（GUI）:
+  - `dianshang_xiaohongshu_sync\run_sync_kol.bat`
+- 品牌小红书&抖音飞书同步（GUI）:
+  - `pinpai_xiaohongshu_douyin_sync\lark_sync.bat`
+- 快速语法检查:
+  - `python -m compileall .`
 
 ## Coding Style & Naming Conventions
-Follow the existing Python style: 4-space indentation, `snake_case` for functions and variables, `UPPER_CASE` for env-driven constants, and short helper functions for parsing or sheet updates. Keep comments brief and practical; Chinese business terms and sheet names should remain unchanged where they map to workbook headers.
+- Python: 4 spaces, `snake_case` for functions/variables, `UPPER_CASE` for constants.
+- Keep Feishu sheet names and Chinese business field names unchanged when used as mapping keys.
+- Prefer small helper functions for: text normalization, header mapping, write/update operations.
+- GUI scripts should keep startup resilience (venv/pythonw fallback) for Windows double-click usage.
 
 ## Testing Guidelines
-There is no formal `tests/` directory yet. Validate changes with narrow row ranges such as `326-329` or `395-399` and write results to a separate `*_结果.xlsx` file. For scraper changes, confirm browser login reuse, output cell values, and expected screenshots under `ecom_screenshots/` or `koc_screenshots/`.
+No formal `tests/` directory yet.
+
+- For Excel scripts: run small row ranges (e.g. `395-399`) and write to a separate output file.
+- For Feishu sync scripts: first run against a small, safe data window or test sheet.
+- Verify key checks explicitly:
+  - Existing non-empty target cells are not overwritten when business rule requires protection.
+  - Upsert behavior (update existing + append new) works without duplicate key rows.
+  - GUI launchers can execute end-to-end via `.bat`.
 
 ## Commit & Pull Request Guidelines
-Recent history uses very short Chinese subjects (`提交`, `excel版`). Keep the one-line style, but make it specific: for example, `runner: 修复行号区间解析` or `电商: 调整案例链接回填`. Pull requests should state the affected sheet type, sample rows used for validation, any new env vars, and include screenshots or workbook evidence when browser behavior or image placement changes.
+- Keep commit subjects short and specific (Chinese or mixed is fine), e.g.:
+  - `电商同步: 保护4月/5月非空单元格不覆盖`
+  - `结构调整: 同步脚本按业务场景归档`
+- PR should include:
+  - affected scenario (`data_handle` / 电商同步 / 品牌抖音同步)
+  - validation scope (rows/sheets/tasks)
+  - screenshots/log snippets for GUI or Feishu write behavior when relevant
 
 ## Security & Configuration Tips
-Do not commit customer Excel files, browser profiles, `.env` files, or generated screenshots. Prefer overriding paths with `XHS_EXCEL_PATH`, `XHS_OUTPUT_PATH`, and `XHS_SHEET_NAME` instead of hardcoding local machine changes.
+- Never commit customer Excel files, browser profiles, tokens, `.env`, or generated screenshots.
+- Do not hardcode personal local paths.
+- When using `lark-cli`, prefer environment/config-based auth and avoid exposing access tokens in logs.

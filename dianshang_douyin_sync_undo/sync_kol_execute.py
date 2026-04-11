@@ -359,8 +359,7 @@ def sync_to_machine_flow():
     target_cfg = SHEETS["机器流转统计"]
     target_col_map = get_header_mapping(SPREADSHEET_TOKEN, target_cfg["sheet_id"], target_cfg["header_row"])
     
-    target_indices = {k: target_col_map.get(k) for k in ["博主", "燃气类型", "地址/收件人/联系电话", "是否已发布", "发布时间", "流转沟通情况", "流转单号（接收）", "流转单号（寄出）"]}
-    need_send_col_idx = target_col_map.get("是否需要寄走机器")
+    target_indices = {k: target_col_map.get(k) for k in ["博主", "燃气类型", "地址/收件人/联系电话", "是否已发布", "发布时间", "是否需要寄走机器", "流转沟通情况", "流转单号（接收）", "流转单号（寄出）"]}
 
     all_source_data = {}
     for src_cfg in TASK3_SOURCES:
@@ -394,6 +393,7 @@ def sync_to_machine_flow():
                     data[tk] = clean_for_write(extract_cell_value(r, idx))
             
             if "抠图" in data.get("地址/收件人/联系电话", ""): continue
+            data["是否需要寄走机器"] = "是"
             all_source_data[name] = data
 
     min_col = min(i for i in target_indices.values() if i is not None)
@@ -443,7 +443,7 @@ def sync_to_machine_flow():
         
         pub_time_str = normalize_text(orow[target_indices["发布时间"] - min_col]) if target_indices.get("发布时间") else ""
         pub_date = parse_sheet_date(pub_time_str)
-        need_send = normalize_text(orow[need_send_col_idx - min_col]) if need_send_col_idx is not None else ""
+        need_send = normalize_text(orow[target_indices["是否需要寄走机器"] - min_col]) if target_indices.get("是否需要寄走机器") else ""
         recv_id = normalize_text(orow[target_indices["流转单号（接收）"] - min_col]) if target_indices.get("流转单号（接收）") else ""
         send_id = normalize_text(orow[target_indices["流转单号（寄出）"] - min_col]) if target_indices.get("流转单号（寄出）") else ""
         
