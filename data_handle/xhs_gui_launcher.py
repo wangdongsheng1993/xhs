@@ -18,6 +18,13 @@ MODE_OPTIONS = [
     ("蒸烤", "steam"),
 ]
 
+MODE_SUFFIX_MAP = {
+    "brand": "_品牌",
+    "ecommerce": "_电商",
+    "koc": "_KOC",
+    "steam": "_蒸烤",
+}
+
 XLSX_FILE_TYPES = [("Excel files", "*.xlsx"), ("All files", "*.*")]
 
 
@@ -32,7 +39,7 @@ def resolve_cli_python():
     return current
 
 
-def derive_output_path(input_path):
+def derive_output_path(input_path, mode="brand"):
     if not input_path:
         return ""
 
@@ -41,10 +48,12 @@ def derive_output_path(input_path):
     if not ext:
         ext = ".xlsx"
 
-    if name.endswith("_结果"):
-        return input_path
+    suffix = MODE_SUFFIX_MAP.get(mode, "_结果")
+    for existing_suffix in MODE_SUFFIX_MAP.values():
+        if name.endswith(existing_suffix):
+            return input_path
 
-    return os.path.join(folder, f"{name}_结果{ext}")
+    return os.path.join(folder, f"{name}{suffix}{ext}")
 
 
 def get_default_excel_path():
@@ -76,8 +85,8 @@ class LauncherApp:
         self.auto_output = True
 
         self.input_path_var = tk.StringVar(value=get_default_excel_path())
-        self.output_path_var = tk.StringVar(value=derive_output_path(self.input_path_var.get()))
         self.mode_var = tk.StringVar(value="brand")
+        self.output_path_var = tk.StringVar(value=derive_output_path(self.input_path_var.get(), self.mode_var.get()))
         self.rows_var = tk.StringVar()
         self.verbose_var = tk.BooleanVar(value=False)
         self.login_wait_var = tk.StringVar(value="10")
@@ -162,12 +171,17 @@ class LauncherApp:
 
     def _bind_events(self):
         self.input_path_var.trace_add("write", self._handle_input_path_change)
+        self.mode_var.trace_add("write", self._handle_mode_change)
         self.output_entry.bind("<KeyRelease>", self._mark_output_manual)
         self.output_entry.bind("<FocusIn>", self._mark_output_manual)
 
     def _handle_input_path_change(self, *_args):
         if self.auto_output:
-            self.output_path_var.set(derive_output_path(self.input_path_var.get()))
+            self.output_path_var.set(derive_output_path(self.input_path_var.get(), self.mode_var.get()))
+
+    def _handle_mode_change(self, *_args):
+        if self.auto_output:
+            self.output_path_var.set(derive_output_path(self.input_path_var.get(), self.mode_var.get()))
 
     def _mark_output_manual(self, _event=None):
         self.auto_output = False
@@ -184,7 +198,7 @@ class LauncherApp:
         self.input_path_var.set(path)
 
     def _pick_output_file(self):
-        current = self.output_path_var.get().strip() or derive_output_path(self.input_path_var.get())
+        current = self.output_path_var.get().strip() or derive_output_path(self.input_path_var.get(), self.mode_var.get())
         path = filedialog.asksaveasfilename(
             title="选择输出 Excel",
             initialdir=os.path.dirname(current) if current else BASE_DIR,

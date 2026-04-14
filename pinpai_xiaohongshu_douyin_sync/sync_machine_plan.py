@@ -12,7 +12,7 @@ import sys
 from datetime import datetime, timedelta
 
 # 配置
-SPREADSHEET_TOKEN = "AJ0owHChoiI6LIk0hi6ctVuCnYQ"
+SPREADSHEET_TOKEN = "ScEkwBLZDizM85kvRhpcnO7Lnkr"
 
 
 def _configure_console_encoding():
@@ -36,10 +36,23 @@ def normalize_text(value):
     - 去除 BOM/零宽空格/不间断空格
     - 折叠连续空白
     - strip
+    - 飞书链接对象提取URL
     """
     if value is None:
         return ""
-    text = str(value)
+    if isinstance(value, list):
+        urls = []
+        for item in value:
+            if isinstance(item, dict) and "link" in item:
+                urls.append(item["link"])
+            elif isinstance(item, dict) and "text" in item:
+                urls.append(item["text"])
+        if urls:
+            text = ", ".join(urls)
+        else:
+            text = str(value)
+    else:
+        text = str(value)
     text = text.replace("\ufeff", "").replace("\u200b", "").replace("\u00a0", " ")
     text = re.sub(r"\s+", " ", text).strip()
     return text
@@ -106,21 +119,24 @@ def publish_time_score(text):
 def should_update_publish_time(current_value, new_value):
     """
     是否应当用 new 覆盖 current。
-    每次执行都强制用源表最新值覆盖目标表，确保发布时间始终同步。
-    仅在 new 为空/未知 且 current 已有值时不覆盖。
+    
+    数据保护规则：
+    - 新值为空/未知：不更新（保护已有值）
+    - 新值与当前值不同：更新
+    - 新值与当前值相同：不更新
     """
     cur = normalize_text(current_value)
     new = normalize_text(new_value)
 
-    # 完全一致无需更新
-    if cur == new:
-        return False
-
-    # new 为空/未知：不覆盖已有值
+    # 新值为空/未知：不更新（保护已有值）
     if not new or new == "未知":
         return False
 
-    # 有新值就更新（不再比较可靠度分数，保证每次执行同步）
+    # 新值与当前值相同：无需更新
+    if cur == new:
+        return False
+
+    # 新值与当前值不同：更新
     return True
 
 # 源Sheet配置
@@ -160,6 +176,56 @@ SOURCE_SHEETS = {
 TARGET_SHEETS = {
     "3月": {"sheet_id": "98jnHp"},  # 机器流转规划3月 Sheet
     "4月": {"sheet_id": "FkznaW"}  # 机器流转规划4月 Sheet
+}
+
+# 二核表配置 - 用于同步到确认执行表
+ERHE_SHEETS = {
+    "小红书二核表": {
+        "sheet_id": "2kiAq6",
+        "header_row": 1
+    },
+    "抖音二核表": {
+        "sheet_id": "jRY56A",
+        "header_row": 2
+    }
+}
+
+# 确认执行表配置 - 作为二核表同步的目标
+CONFIRM_SHEETS = {
+    "小红书确认执行4月": {
+        "sheet_id": "TDxBlT",
+        "header_row": 2
+    },
+    "小红书确认执行5月": {
+        "sheet_id": "OJdYYD",
+        "header_row": 2
+    },
+    "3月抖音确认执行": {
+        "sheet_id": "f08bd2",
+        "header_row": 1
+    },
+    "4月抖音确认执行": {
+        "sheet_id": "iFO2b6",
+        "header_row": 2
+    }
+}
+
+# 二核表到确认执行表的字段映射
+# 格式: 目标列名 -> 源列名
+# 只更新这四列: ID、主页链接、合作形式、平台价
+ERHE_TO_CONFIRM_MAPPING = {
+    "ID": "ID",
+    "主页链接": "主页链接",
+    "合作形式": "合作形式",
+    "平台价（平台裸价）": "平台价格"
+}
+
+# 抖音二核表到确认执行表的字段映射
+ERHE_TO_CONFIRM_MAPPING_DOUYIN = {
+    "ID": "ID",
+    "主页链接": "主页链接",
+    "合作形式": "合作形式",
+    "平台价（平台裸价）": "平台价格"
 }
 
 
@@ -271,7 +337,9 @@ def get_target_header_mapping(target_sheet_id, header_row=1):
 
 def read_sheet_data(sheet_id, start_row):
     """读取sheet数据"""
-    range_str = f"{sheet_id}!A{start_row}:BZ{start_row + 200}"
+    total_rows = get_sheet_row_count(sheet_id)
+    end_row = max(start_row + 200, total_rows)
+    range_str = f"{sheet_id}!A{start_row}:BZ{end_row}"
     cmd = f'lark-cli sheets +read --spreadsheet-token {SPREADSHEET_TOKEN} --sheet-id {sheet_id} --range "{range_str}"'
     result = run_lark_cli(cmd)
 
@@ -283,7 +351,7 @@ def read_sheet_data(sheet_id, start_row):
 
 def filter_and_transform(rows, col_map, platform, month):
     """
-    筛选 KOL 且地址非抠图的数据，并提取目标Sheet需要的列:
+    筛选 KOL 且地址非抠图/非自有的数据，并提取目标Sheet需要的列:
     - platform: 平台 (小红书/抖音)
     - nickname: 博主昵称 (源表"昵称"列)
     - gas_type: 燃气类型 (源表"气源"列)
@@ -292,7 +360,8 @@ def filter_and_transform(rows, col_map, platform, month):
 
     筛选条件:
     1. 达人量级包含"KOL"（不筛选KOC）
-    2. 产品邮寄地址不包含"抠图"
+    2. 产品邮寄地址不包含"抠图"或"扣图"
+    3. 产品邮寄地址不是"自有"
     """
     filtered = []
 
@@ -317,12 +386,13 @@ def filter_and_transform(rows, col_map, platform, month):
 
         if "KOL" not in kol_level.upper():
             continue
-        if "抠图" in address:
+        if "抠图" in address or "扣图" in address:
+            continue
+        if address == "自有":
             continue
 
         gas_type = str(row[gas_col]) if gas_col is not None and row[gas_col] else ""
         nickname = str(row[nickname_col]) if row[nickname_col] else ""
-        # 发布时间：无数据则为空字符串，后续写入时转换为"未知"（数字 4.1 -> 4.10）
         publish_time = (
             format_publish_time_cell(row[publish_col])
             if publish_col is not None and row[publish_col] not in (None, "")
@@ -345,6 +415,7 @@ def find_published_bloggers(rows, col_map):
     kol_col = col_map.get("达人量级")
     nickname_col = col_map.get("昵称")
     publish_col = col_map.get("发布状态")
+    addr_col = col_map.get("产品邮寄地址")
 
     if kol_col is None or nickname_col is None or publish_col is None:
         return set()
@@ -357,9 +428,14 @@ def find_published_bloggers(rows, col_map):
         kol_level = normalize_text(row[kol_col])
         publish_status = normalize_text(row[publish_col])
         nickname = normalize_text(row[nickname_col])
+        address = normalize_text(row[addr_col]) if addr_col is not None else ""
 
         if "KOL" not in kol_level.upper():
             continue
+        
+        if "抠图" in address or "扣图" in address or address == "自有":
+            continue
+        
         if "已发布" in publish_status:
             if nickname:
                 published.add(nickname)
@@ -670,13 +746,261 @@ def append_to_target(data_list, target_sheet_id):
         print(f"命令失败: {result.stderr.decode('utf-8', errors='replace')}")
 
 
+def sync_erhe_to_confirm(source_name, target_name, col_mapping):
+    """
+    从二核表同步数据到确认执行表
+    
+    Args:
+        source_name: 源表名称（二核表）
+        target_name: 目标表名称（确认执行表）
+        col_mapping: 字段映射 {目标列名: 源列名}
+    
+    规则:
+        - 如果目标单元格已有数据，不执行更新（保护已有数据）
+        - 按昵称匹配行
+    """
+    source_cfg = ERHE_SHEETS.get(source_name)
+    target_cfg = CONFIRM_SHEETS.get(target_name)
+    
+    if not source_cfg or not target_cfg:
+        print(f"  错误: 未找到表配置 source={source_name}, target={target_name}")
+        return
+    
+    print(f"\n{'='*50}")
+    print(f"同步: {source_name} -> {target_name}")
+    
+    source_col_map = get_header_mapping(source_cfg["sheet_id"], source_cfg["header_row"])
+    target_col_map = get_header_mapping(target_cfg["sheet_id"], target_cfg["header_row"])
+    
+    source_col_indices = {k: source_col_map.get(v) for k, v in col_mapping.items()}
+    target_col_indices = {k: target_col_map.get(k) for k in col_mapping}
+    
+    match_key = "昵称"
+    match_key_target_idx = target_col_map.get(match_key)
+    match_key_source_idx = source_col_map.get(match_key)
+    
+    if match_key_target_idx is None or match_key_source_idx is None:
+        print(f"  错误: 未找到匹配键列 '{match_key}'")
+        print(f"  源表列: {list(source_col_map.keys())[:10]}")
+        print(f"  目标表列: {list(target_col_map.keys())[:10]}")
+        return
+    
+    rows = read_sheet_data(source_cfg["sheet_id"], source_cfg["header_row"] + 1)
+    
+    source_data = []
+    for row in rows:
+        key_val = normalize_text(row[match_key_source_idx] if match_key_source_idx < len(row) else "")
+        if not key_val:
+            continue
+        row_data = {}
+        for col_name, src_col_idx in source_col_indices.items():
+            if src_col_idx is None:
+                continue
+            val = normalize_text(row[src_col_idx] if src_col_idx < len(row) else "")
+            row_data[col_name] = val
+        source_data.append((key_val, row_data))
+    
+    print(f"  源表读取到 {len(source_data)} 行")
+    
+    target_row_count = get_sheet_row_count(target_cfg["sheet_id"])
+    if target_row_count <= target_cfg["header_row"]:
+        target_row_count = target_cfg["header_row"] + 200
+    
+    all_target_cols = [v for v in target_col_indices.values() if v is not None]
+    all_target_cols.append(match_key_target_idx)
+    if not all_target_cols:
+        print(f"  错误: 没有可读取的目标列")
+        return
+    
+    min_col, max_col = min(all_target_cols), max(all_target_cols)
+    range_str = f"{target_cfg['sheet_id']}!{index_to_col(min_col)}{target_cfg['header_row']}:{index_to_col(max_col)}{target_row_count}"
+    
+    cmd = f'lark-cli sheets +read --spreadsheet-token {SPREADSHEET_TOKEN} --sheet-id {target_cfg["sheet_id"]} --range "{range_str}"'
+    result = run_lark_cli(cmd)
+    
+    existing_rows = {}
+    last_data_row = target_cfg["header_row"]
+    if result and result.get("ok"):
+        values = result.get("data", {}).get("valueRange", {}).get("values", [])
+        for idx, row in enumerate(values):
+            row_num = idx + target_cfg["header_row"]
+            if row_num <= target_cfg["header_row"]:
+                continue
+            col_offset = match_key_target_idx - min_col
+            nick_norm = normalize_text(row[col_offset] if row and len(row) > col_offset else "")
+            if nick_norm:
+                existing_rows[nick_norm] = (row_num, row)
+                last_data_row = row_num
+    
+    print(f"  目标表已有 {len(existing_rows)} 行数据")
+    
+    to_update = []
+    for key_val, row_data in source_data:
+        if key_val not in existing_rows:
+            continue
+        
+        row_num, orig_row = existing_rows[key_val]
+        changes = {}
+        for target_col, new_val in row_data.items():
+            tgt_idx = target_col_indices.get(target_col)
+            if tgt_idx is None:
+                continue
+            
+            cur_val = normalize_text(orig_row[tgt_idx - min_col] if len(orig_row) > (tgt_idx - min_col) else "")
+            
+            is_dirty_link = cur_val.startswith("[{'") and "'cellPosition'" in cur_val
+            
+            if cur_val and not is_dirty_link:
+                continue
+            
+            if cur_val != new_val and new_val:
+                changes[target_col] = (tgt_idx, new_val)
+        
+        if changes:
+            to_update.append((row_num, changes))
+    
+    print(f"  需要更新 {len(to_update)} 行")
+    
+    updated_count = 0
+    for row_num, changes in to_update:
+        change_indices = [v[0] for v in changes.values()]
+        r_min, r_max = min(change_indices), max(change_indices)
+        
+        _, orig_row_values = existing_rows.get(
+            next(k for k, v in existing_rows.items() if v[0] == row_num),
+            (row_num, [])
+        )
+        
+        row_vals = []
+        for c_idx in range(r_min, r_max + 1):
+            col_name = next((n for n, i in target_col_indices.items() if i == c_idx), None)
+            if col_name in changes:
+                row_vals.append(changes[col_name][1])
+            else:
+                row_vals.append(orig_row_values[c_idx - min_col] if len(orig_row_values) > (c_idx - min_col) else "")
+        
+        range_str = f"{index_to_col(r_min)}{row_num}:{index_to_col(r_max)}{row_num}"
+        result = lark_sheets_write(target_cfg["sheet_id"], range_str, [row_vals])
+        if result.returncode == 0:
+            resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
+            if resp.get("ok"):
+                updated_count += 1
+    
+    print(f"  已更新 {updated_count} 行")
+    
+    source_nicknames = set(key_val for key_val, _ in source_data)
+    missing_in_source = []
+    for nick_norm in existing_rows.keys():
+        if nick_norm not in source_nicknames:
+            missing_in_source.append(nick_norm)
+    
+    if missing_in_source:
+        print(f"\n  ⚠ 以下 {len(missing_in_source)} 个博主在二核表中不存在，无法同步:")
+        for nick in sorted(missing_in_source):
+            print(f"    - {nick}")
+    
+    update_koc_kol_koutu_status_in_confirm(target_cfg, target_col_map, existing_rows, min_col)
+
+
+def update_koc_kol_koutu_status_in_confirm(target_cfg, target_col_map, existing_rows, min_col):
+    """
+    在确认执行表中更新 KOC/KOL 抠图状态
+    
+    规则：
+    1. KOC：产品邮寄地址=无需收集，气源=无需收集, 快递状态=无需配送产品, 样机情况=无样机
+    2. KOL且地址包含抠图：气源=无需收集, 快递状态=无需配送产品, 样机情况=无样机
+    
+    数据保护：如果目标单元格已有数据，不覆盖
+    """
+    print(f"\n  更新 KOC/KOL 抠图状态...")
+    
+    kol_col = target_col_map.get("达人量级")
+    addr_col = target_col_map.get("产品邮寄地址")
+    gas_col = target_col_map.get("气源")
+    express_col = target_col_map.get("产品快递状态（详情看机器流转规划表）")
+    sample_col = target_col_map.get("样机情况（异常备注好问题）")
+    
+    if kol_col is None:
+        print(f"    未找到'达人量级'列，跳过")
+        return
+    
+    koc_updates = 0
+    kol_koutu_updates = 0
+    
+    for nick_norm, (row_num, orig_row) in existing_rows.items():
+        kol_level = normalize_text(orig_row[kol_col - min_col] if orig_row and len(orig_row) > (kol_col - min_col) else "")
+        address = normalize_text(orig_row[addr_col - min_col] if addr_col is not None and orig_row and len(orig_row) > (addr_col - min_col) else "")
+        
+        is_koc = "KOC" in kol_level.upper()
+        is_kol_koutu = "KOL" in kol_level.upper() and ("抠图" in address or "扣图" in address)
+        
+        if not is_koc and not is_kol_koutu:
+            continue
+        
+        if is_koc:
+            updates = [
+                (addr_col, "产品邮寄地址", "无需收集"),
+                (gas_col, "气源", "无需收集"),
+                (express_col, "产品快递状态", "无需配送产品"),
+                (sample_col, "样机情况", "无样机")
+            ]
+        else:
+            updates = [
+                (gas_col, "气源", "无需收集"),
+                (express_col, "产品快递状态", "无需配送产品"),
+                (sample_col, "样机情况", "无样机")
+            ]
+        
+        for col_idx, col_name, value in updates:
+            if col_idx is None:
+                continue
+            
+            cur_val = normalize_text(orig_row[col_idx - min_col] if orig_row and len(orig_row) > (col_idx - min_col) else "")
+            
+            if cur_val:
+                continue
+            
+            col_letter = index_to_col(col_idx)
+            range_str = f"{target_cfg['sheet_id']}!{col_letter}{row_num}:{col_letter}{row_num}"
+            result = lark_sheets_write(target_cfg["sheet_id"], range_str, [[value]])
+            if result.returncode == 0:
+                resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
+                if resp.get("ok"):
+                    if is_koc:
+                        koc_updates += 1
+                    else:
+                        kol_koutu_updates += 1
+    
+    print(f"    KOC 更新 {koc_updates} 个单元格, KOL抠图 更新 {kol_koutu_updates} 个单元格")
+
+
+def get_sheet_row_count(sheet_id):
+    """获取sheet的行数"""
+    cmd = f'lark-cli sheets +info --spreadsheet-token {SPREADSHEET_TOKEN}'
+    result = run_lark_cli(cmd)
+    if not result:
+        return 1
+    
+    sheets = result.get("data", {}).get("sheets", {}).get("sheets", [])
+    for sheet in sheets:
+        if sheet.get("sheet_id") == sheet_id:
+            return sheet.get("grid_properties", {}).get("row_count", 1)
+    return 1
+
+
 def main():
     import sys
     _configure_console_encoding()
 
     if len(sys.argv) < 5:
-        print("用法: python sync_machine_plan.py <小红书3月起始行> <小红书4月起始行> <抖音3月起始行> <抖音4月起始行> [是否更新已发布:0或1] [是否更新KOC状态:0或1] [是否更新确认执行表:0或1]")
-        print("示例: python sync_machine_plan.py 3 5 2 8 1 1 1")
+        print("用法: python sync_machine_plan.py <小红书3月起始行> <小红书4月起始行> <抖音3月起始行> <抖音4月起始行> [任务1:0或1] [任务2:0或1] [任务3:0或1] [任务4:0或1]")
+        print("示例: python sync_machine_plan.py 3 5 2 8 1 1 1 1")
+        print("")
+        print("任务说明:")
+        print("  任务1: 更新小红书确认执行sheet (二核表→确认执行表)")
+        print("  任务2: 更新抖音确认执行sheet (二核表→确认执行表)")
+        print("  任务3: 更新小红书机器流转sheet (确认执行表→机器流转规划)")
+        print("  任务4: 更新抖音机器流转sheet (确认执行表→机器流转规划)")
         sys.exit(1)
 
     SOURCE_SHEETS["小红书确认执行3月"]["start_row"] = int(sys.argv[1])
@@ -684,57 +1008,128 @@ def main():
     SOURCE_SHEETS["3月抖音确认执行"]["start_row"] = int(sys.argv[3])
     SOURCE_SHEETS["4月抖音确认执行"]["start_row"] = int(sys.argv[4])
 
-    # 是否更新已发布状态，默认1
-    update_published = int(sys.argv[5]) if len(sys.argv) > 5 else 1
-    # 是否更新KOC/KOL抠图状态，默认1
-    update_koc_status = int(sys.argv[6]) if len(sys.argv) > 6 else 1
-    # 是否更新确认执行表的"是否修改"列，默认1
-    update_modify_flag = int(sys.argv[7]) if len(sys.argv) > 7 else 1
+    # 任务开关，默认全部执行
+    task1 = int(sys.argv[5]) if len(sys.argv) > 5 else 1
+    task2 = int(sys.argv[6]) if len(sys.argv) > 6 else 1
+    task3 = int(sys.argv[7]) if len(sys.argv) > 7 else 1
+    task4 = int(sys.argv[8]) if len(sys.argv) > 8 else 1
 
-    data_3月 = []
-    data_4月 = []
+    print("="*60)
+    print("任务执行计划:")
+    print(f"  任务1 (更新小红书确认执行sheet): {'是' if task1 else '否'}")
+    print(f"  任务2 (更新抖音确认执行sheet): {'是' if task2 else '否'}")
+    print(f"  任务3 (更新小红书机器流转sheet): {'是' if task3 else '否'}")
+    print(f"  任务4 (更新抖音机器流转sheet): {'是' if task4 else '否'}")
+    print("="*60)
 
-    for name, config in SOURCE_SHEETS.items():
-        print(f"\n处理 {name}...")
+    # 任务1: 更新小红书确认执行sheet
+    if task1:
+        print("\n" + "="*60)
+        print("执行任务1: 更新小红书确认执行sheet")
+        print("="*60)
+        sync_erhe_to_confirm("小红书二核表", "小红书确认执行4月", ERHE_TO_CONFIRM_MAPPING)
+        sync_erhe_to_confirm("小红书二核表", "小红书确认执行5月", ERHE_TO_CONFIRM_MAPPING)
 
-        col_map = get_header_mapping(config["sheet_id"], config["header_row"])
-        print(f"  可用列: {list(col_map.keys())[:10]}...")
+    # 任务2: 更新抖音确认执行sheet
+    if task2:
+        print("\n" + "="*60)
+        print("执行任务2: 更新抖音确认执行sheet")
+        print("="*60)
+        sync_erhe_to_confirm("抖音二核表", "3月抖音确认执行", ERHE_TO_CONFIRM_MAPPING_DOUYIN)
+        sync_erhe_to_confirm("抖音二核表", "4月抖音确认执行", ERHE_TO_CONFIRM_MAPPING_DOUYIN)
 
-        rows = read_sheet_data(config["sheet_id"], config["start_row"])
-        print(f"  读取到 {len(rows)} 行")
+    # 任务3: 更新小红书机器流转sheet
+    if task3:
+        print("\n" + "="*60)
+        print("执行任务3: 更新小红书机器流转sheet")
+        print("="*60)
+        
+        data_3月_xhs = []
+        data_4月_xhs = []
+        
+        for name in ["小红书确认执行3月", "小红书确认执行4月"]:
+            config = SOURCE_SHEETS[name]
+            print(f"\n处理 {name}...")
+            
+            col_map = get_header_mapping(config["sheet_id"], config["header_row"])
+            print(f"  可用列: {list(col_map.keys())[:10]}...")
+            
+            rows = read_sheet_data(config["sheet_id"], config["start_row"])
+            print(f"  读取到 {len(rows)} 行")
+            
+            filtered = filter_and_transform(rows, col_map, config["platform"], config["month"])
+            print(f"  筛选后 {len(filtered)} 行")
+            
+            if config["month"] == "3月":
+                data_3月_xhs.extend(filtered)
+            else:
+                data_4月_xhs.extend(filtered)
+        
+        print(f"\n小红书3月数据共 {len(data_3月_xhs)} 行")
+        append_to_target(data_3月_xhs, TARGET_SHEETS["3月"]["sheet_id"])
+        
+        print(f"小红书4月数据共 {len(data_4月_xhs)} 行")
+        append_to_target(data_4月_xhs, TARGET_SHEETS["4月"]["sheet_id"])
 
-        filtered = filter_and_transform(rows, col_map, config["platform"], config["month"])
-        print(f"  筛选后 {len(filtered)} 行")
+    # 任务4: 更新抖音机器流转sheet
+    if task4:
+        print("\n" + "="*60)
+        print("执行任务4: 更新抖音机器流转sheet")
+        print("="*60)
+        
+        data_3月_dy = []
+        data_4月_dy = []
+        
+        for name in ["3月抖音确认执行", "4月抖音确认执行"]:
+            config = SOURCE_SHEETS[name]
+            print(f"\n处理 {name}...")
+            
+            col_map = get_header_mapping(config["sheet_id"], config["header_row"])
+            print(f"  可用列: {list(col_map.keys())[:10]}...")
+            
+            rows = read_sheet_data(config["sheet_id"], config["start_row"])
+            print(f"  读取到 {len(rows)} 行")
+            
+            filtered = filter_and_transform(rows, col_map, config["platform"], config["month"])
+            print(f"  筛选后 {len(filtered)} 行")
+            
+            if config["month"] == "3月":
+                data_3月_dy.extend(filtered)
+            else:
+                data_4月_dy.extend(filtered)
+        
+        print(f"\n抖音3月数据共 {len(data_3月_dy)} 行")
+        append_to_target(data_3月_dy, TARGET_SHEETS["3月"]["sheet_id"])
+        
+        print(f"抖音4月数据共 {len(data_4月_dy)} 行")
+        append_to_target(data_4月_dy, TARGET_SHEETS["4月"]["sheet_id"])
 
-        if config["month"] == "3月":
-            data_3月.extend(filtered)
-        else:
-            data_4月.extend(filtered)
-
-    print(f"\n3月数据共 {len(data_3月)} 行")
-    # 追加到机器流转规划3月 Sheet，数据写入 A平台 B博主 C燃气类型 D地址 四列
-    append_to_target(data_3月, TARGET_SHEETS["3月"]["sheet_id"])
-
-    print(f"4月数据共 {len(data_4月)} 行")
-    # 追加到机器流转规划4月 Sheet，数据写入 A平台 B博主 C燃气类型 D地址 四列
-    append_to_target(data_4月, TARGET_SHEETS["4月"]["sheet_id"])
-
-    # 更新已发布状态
-    if update_published:
+    # 更新已发布状态（任务3或4执行时才更新）
+    if task3 or task4:
+        print("\n" + "="*60)
+        print("更新已发布状态...")
+        print("="*60)
         update_published_status()
 
-    # 更新KOC/KOL抠图状态
-    if update_koc_status:
-        update_koc_status_columns()
+    # 检查并更新需安排流转机器状态（任务3或4执行时才更新）
+    if task3 or task4:
+        print("\n" + "="*60)
+        print("更新流转沟通情况...")
+        print("="*60)
+        update_luzhu_status()
 
-    # 更新确认执行表的"是否修改"列
-    if update_modify_flag:
-        update_modify_flag_columns()
-
-    # 检查并更新需安排流转机器状态（发布时间<10天且流转沟通情况为空）
-    update_luzhu_status()
-
-    print("\n同步完成!")
+    print("\n" + "="*60)
+    print("所有任务执行完成!")
+    print("="*60)
+    
+    print("\n" + "="*60)
+    print("执行汇总")
+    print("="*60)
+    print(f"任务1 (更新小红书确认执行sheet): {'已执行' if task1 else '未执行'}")
+    print(f"任务2 (更新抖音确认执行sheet): {'已执行' if task2 else '未执行'}")
+    print(f"任务3 (更新小红书机器流转sheet): {'已执行' if task3 else '未执行'}")
+    print(f"任务4 (更新抖音机器流转sheet): {'已执行' if task4 else '未执行'}")
+    print("\n提示: 如果有博主未同步，请检查二核表中是否存在该博主数据")
 
 
 def update_published_status():
@@ -756,9 +1151,9 @@ def update_published_status():
         rows = read_sheet_data(config["sheet_id"], config["start_row"])
         published = find_published_bloggers(rows, col_map)
 
-        # 同时收集本月所有 KOL 昵称，用于把未发布回填为“否”
         kol_col = col_map.get("达人量级")
         nickname_col = col_map.get("昵称")
+        addr_col = col_map.get("产品邮寄地址")
         if kol_col is not None and nickname_col is not None:
             for row in rows:
                 if len(row) <= max(kol_col, nickname_col):
@@ -769,6 +1164,11 @@ def update_published_status():
                 nick = normalize_text(row[nickname_col])
                 if not nick:
                     continue
+                
+                address = normalize_text(row[addr_col]) if addr_col is not None and addr_col < len(row) else ""
+                if "抠图" in address or "扣图" in address or address == "自有":
+                    continue
+                
                 if config["month"] == "3月":
                     all_kol_3月.add(nick)
                 else:
@@ -898,153 +1298,6 @@ def update_target_published(published_set, all_kol_set, target_sheet_id):
     print(f"  {target_sheet_id}: 已更新 {len(rows_to_update)} 行的已发布状态")
 
 
-def update_koc_status_columns():
-    """
-    更新状态：
-    1. KOC：产品邮寄地址=无需收集，气源=无需收集, 快递状态=无需配送产品, 样机情况=无样机
-    2. KOL且地址包含抠图：气源=无需收集, 快递状态=无需配送产品, 样机情况=无样机
-    """
-    print("\n" + "="*50)
-    print("更新KOC/KOL抠图状态...")
-
-    for name, config in SOURCE_SHEETS.items():
-        if config["start_row"] is None:
-            continue
-
-        print(f"\n处理 {name}...")
-
-        col_map = get_header_mapping(config["sheet_id"], config["header_row"])
-
-        kol_col = col_map.get("达人量级")
-        addr_col = col_map.get("产品邮寄地址")
-        gas_col = col_map.get("气源")
-        express_col = col_map.get("产品快递状态（详情看机器流转规划表）")
-        sample_col = col_map.get("样机情况（异常备注好问题）")
-
-        if kol_col is None or addr_col is None:
-            print(f"  缺少必需列，跳过")
-            continue
-
-        # 读取数据
-        rows = read_sheet_data(config["sheet_id"], config["start_row"])
-        print(f"  读取到 {len(rows)} 行")
-
-        # 找到需要更新的行
-        koc_rows = []  # KOC行
-        kol_koutu_rows = []  # KOL但地址包含抠图的行
-        for idx, row in enumerate(rows, start=config["start_row"]):
-            if len(row) <= max(kol_col, addr_col):
-                continue
-
-            kol_level = str(row[kol_col]) if row[kol_col] else ""
-            address = str(row[addr_col]) if row[addr_col] else ""
-
-            # KOC
-            if "KOC" in kol_level.upper():
-                koc_rows.append(idx)
-            # KOL且地址包含抠图
-            elif "KOL" in kol_level.upper() and "抠图" in address:
-                kol_koutu_rows.append(idx)
-
-        print(f"  KOC行: {len(koc_rows)}, KOL抠图行: {len(kol_koutu_rows)}")
-
-        updated_count = 0
-
-        # 更新KOC行（4列）
-        for row_num in koc_rows:
-            updates = [
-                (addr_col, "无需收集"),
-                (gas_col, "无需收集"),
-                (express_col, "无需配送产品"),
-                (sample_col, "无样机")
-            ]
-            for col_idx, value in updates:
-                if col_idx is None:
-                    continue
-                col_letter = index_to_col(col_idx)
-                range_str = f"{config['sheet_id']}!{col_letter}{row_num}:{col_letter}{row_num}"
-                result = lark_sheets_write(config["sheet_id"], range_str, [[value]])
-                if result.returncode == 0:
-                    resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
-                    if resp.get("ok"):
-                        updated_count += 1
-
-        # 更新KOL抠图行（3列：气源、快递状态、样机情况）
-        for row_num in kol_koutu_rows:
-            updates = [
-                (gas_col, "无需收集"),
-                (express_col, "无需配送产品"),
-                (sample_col, "无样机")
-            ]
-            for col_idx, value in updates:
-                if col_idx is None:
-                    continue
-                col_letter = index_to_col(col_idx)
-                range_str = f"{config['sheet_id']}!{col_letter}{row_num}:{col_letter}{row_num}"
-                result = lark_sheets_write(config["sheet_id"], range_str, [[value]])
-                if result.returncode == 0:
-                    resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
-                    if resp.get("ok"):
-                        updated_count += 1
-
-        print(f"  已更新 {updated_count} 个单元格")
-
-
-def update_modify_flag_columns():
-    """
-    更新确认执行表的"是否修改"列
-    逻辑：KOL且地址非抠图的数据，在确认执行表中将"是否修改"列标记为"是"
-    """
-    print("\n" + "="*50)
-    print("更新确认执行表的'是否修改'列...")
-
-    for name, config in SOURCE_SHEETS.items():
-        if config["start_row"] is None:
-            continue
-
-        print(f"\n处理 {name}...")
-
-        col_map = get_header_mapping(config["sheet_id"], config["header_row"])
-
-        kol_col = col_map.get("达人量级")
-        addr_col = col_map.get("产品邮寄地址")
-        modify_col = col_map.get("是否修改")
-
-        if kol_col is None or addr_col is None or modify_col is None:
-            print(f"  缺少必需列（达人量级={kol_col}, 产品邮寄地址={addr_col}, 是否修改={modify_col}），跳过")
-            continue
-
-        # 读取数据
-        rows = read_sheet_data(config["sheet_id"], config["start_row"])
-        print(f"  读取到 {len(rows)} 行")
-
-        # 找到需要更新的行：KOL且地址非抠图
-        rows_to_update = []
-        for idx, row in enumerate(rows, start=config["start_row"]):
-            if len(row) <= max(kol_col, addr_col):
-                continue
-
-            kol_level = str(row[kol_col]) if row[kol_col] else ""
-            address = str(row[addr_col]) if row[addr_col] else ""
-
-            if "KOL" in kol_level.upper() and "抠图" not in address:
-                rows_to_update.append(idx)
-
-        print(f"  需更新 {len(rows_to_update)} 行")
-
-        updated_count = 0
-        for row_num in rows_to_update:
-            col_letter = index_to_col(modify_col)
-            range_str = f"{config['sheet_id']}!{col_letter}{row_num}:{col_letter}{row_num}"
-            result = lark_sheets_write(config["sheet_id"], range_str, [[1]])
-            if result.returncode == 0:
-                resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
-                if resp.get("ok"):
-                    updated_count += 1
-
-        print(f"  已更新 {updated_count} 个单元格")
-
-
 def update_luzhu_status():
     """
     检查发布时间，若发布时间距今小于10天且流转沟通情况列为空，
@@ -1088,7 +1341,7 @@ def update_luzhu_status():
 
             if "KOL" not in kol_level.upper():
                 continue
-            if "抠图" in address:
+            if "抠图" in address or "扣图" in address or address == "自有":
                 continue
 
             nickname = normalize_text(row[nickname_col]) if nickname_col is not None and row[nickname_col] else ""

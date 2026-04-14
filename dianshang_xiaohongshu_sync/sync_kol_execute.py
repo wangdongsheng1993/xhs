@@ -14,14 +14,16 @@ import sys
 from datetime import datetime, date, timedelta
 
 # 主文档（4-5月及统计表所在文档）
-SPREADSHEET_TOKEN = "OQKNwQnKriY2NBkXYc0cwBL5nmb"
+SPREADSHEET_TOKEN = "HQpXwz4ZJi4sCgkptCWcJv7Tn6d"
 # 3月数据文档
-SPREADSHEET_TOKEN_MAR = "HsVGwSkx5igeUiksE1Mc1qyun5e"
+SPREADSHEET_TOKEN_MAR = "Ib2bwKbociVgALkHkQdcRZBon9e"
 
 SHEETS = {
     "二核-KOL": {"sheet_id": "xbVzrU", "header_row": 1},
+    "二核-KOC": {"sheet_id": "2uAcNH", "header_row": 1},
     "确认执行-KOL-4月": {"sheet_id": "C829uw", "header_row": 2},
     "确认执行-KOL-5月": {"sheet_id": "790USh", "header_row": 2},
+    "确认执行-KOC-4月": {"sheet_id": "PcLSfB", "header_row": 2},
     "机器流转统计": {"sheet_id": "keg3mV", "header_row": 1},
 }
 
@@ -38,6 +40,16 @@ TASK1_MAPPING = {
     "主页链接": "主页链接",
     "来源": "来源",
     "预计档期": "预计档期",
+    "形式": "形式",
+    "达人平台裸价": "达人平台裸价",
+}
+
+TASK4_MAPPING = {
+    "小红书昵称": "小红书昵称",
+    "博主ID": "ID",
+    "蒲公英链接": "蒲公英链接",
+    "主页链接": "主页链接",
+    "粉丝数 （w）": "粉丝数 （w）",
     "形式": "形式",
     "达人平台裸价": "达人平台裸价",
 }
@@ -318,7 +330,6 @@ def sync_source_to_target(source_name, target_name, col_mapping, start_row=None,
                 last_data_row = row_num
 
     to_update, to_append = [], []
-    protect_sheets = {"确认执行-KOL-4月", "确认执行-KOL-5月"}
 
     for key_val, row_data in source_data:
         if key_val in existing_rows:
@@ -328,7 +339,6 @@ def sync_source_to_target(source_name, target_name, col_mapping, start_row=None,
                 tgt_idx = target_col_indices.get(target_col)
                 if tgt_idx is None: continue
                 cur_val = normalize_text(orig_row[tgt_idx - min_col]) if len(orig_row) > (tgt_idx - min_col) else ""
-                if target_name in protect_sheets and cur_val: continue
                 if cur_val != new_val and new_val: changes[target_col] = (tgt_idx, new_val)
             if changes: to_update.append((row_num, changes))
         elif allow_append: to_append.append(row_data)
@@ -488,12 +498,13 @@ def sync_to_machine_flow():
 
 def main():
     _configure_console_encoding()
-    run_task1, run_task2, run_task3 = True, True, True
+    run_task1, run_task2, run_task3, run_task4 = True, True, True, True
     if len(sys.argv) > 1:
-        run_task1 = "1" in sys.argv[1]; run_task2 = "2" in sys.argv[1]; run_task3 = "3" in sys.argv[1]
+        run_task1 = "1" in sys.argv[1]; run_task2 = "2" in sys.argv[1]; run_task3 = "3" in sys.argv[1]; run_task4 = "4" in sys.argv[1]
     
     if run_task1: sync_source_to_target("二核-KOL", "确认执行-KOL-4月", TASK1_MAPPING, allow_append=False)
     if run_task2: sync_source_to_target("二核-KOL", "确认执行-KOL-5月", TASK1_MAPPING, allow_append=False)
+    if run_task4: sync_source_to_target("二核-KOC", "确认执行-KOC-4月", TASK4_MAPPING, allow_append=False)
     if run_task3: sync_to_machine_flow()
 
 if __name__ == "__main__":

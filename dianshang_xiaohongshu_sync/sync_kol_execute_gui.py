@@ -42,6 +42,7 @@ class SyncKolApp:
         self.task1_var = tk.BooleanVar(value=True)
         self.task2_var = tk.BooleanVar(value=True)
         self.task3_var = tk.BooleanVar(value=True)
+        self.task4_var = tk.BooleanVar(value=True)
 
         self._build_ui()
         self.root.after(150, self._drain_log_queue)
@@ -81,9 +82,15 @@ class SyncKolApp:
 
         ttk.Checkbutton(
             task_frame,
-            text="任务3: 确认执行-KOL-4月/5月 → 机器流转统计",
-            variable=self.task3_var,
+            text="任务3: 二核-KOC → 确认执行-KOC-4月",
+            variable=self.task4_var,
         ).grid(row=2, column=0, sticky="w", pady=4)
+
+        ttk.Checkbutton(
+            task_frame,
+            text="任务4: 确认执行-KOL-4月/5月 → 机器流转统计",
+            variable=self.task3_var,
+        ).grid(row=3, column=0, sticky="w", pady=4)
 
         mapping_frame = ttk.LabelFrame(self.root, text="列映射说明", padding=12)
         mapping_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 0))
@@ -91,7 +98,9 @@ class SyncKolApp:
         mapping_text = (
             "任务1&2: 小红书昵称→小红书昵称, 博主ID→ID, 蒲公英链接→蒲公英链接, "
             "主页链接→主页链接, 来源→来源, 预计档期→预计档期, 形式→形式, 达人平台裸价→达人平台裸价\n"
-            "任务3: 博主→小红书昵称, 燃气类型→气源, 地址/收件人/联系电话→产品邮寄地址, "
+            "任务3: 小红书昵称→小红书昵称, 博主ID→ID, 蒲公英链接→蒲公英链接, "
+            "主页链接→主页链接, 粉丝数(w)→粉丝数(w), 形式→形式, 达人平台裸价→达人平台裸价\n"
+            "任务4: 博主→小红书昵称, 燃气类型→气源, 地址/收件人/联系电话→产品邮寄地址, "
             "是否已发布→稿件进度(已发布=是), 发布日期→档期, 是否需要寄走机器=是"
         )
         ttk.Label(mapping_frame, text=mapping_text, wraplength=700, foreground="gray", font=("Microsoft YaHei UI", 9)).grid(
@@ -146,6 +155,8 @@ class SyncKolApp:
             tasks += "2"
         if self.task3_var.get():
             tasks += "3"
+        if self.task4_var.get():
+            tasks += "4"
 
         if not tasks:
             messagebox.showwarning("提示", "请至少选择一个同步任务")

@@ -45,9 +45,10 @@ class LarkSyncApp:
         self.xhs_4_row_var = tk.StringVar(value="3")
         self.douyin_3_row_var = tk.StringVar(value="2")
         self.douyin_4_row_var = tk.StringVar(value="3")
-        self.update_published_var = tk.BooleanVar(value=True)
-        self.update_koc_status_var = tk.BooleanVar(value=True)
-        self.update_modify_flag_var = tk.BooleanVar(value=True)
+        self.task1_var = tk.BooleanVar(value=True)
+        self.task2_var = tk.BooleanVar(value=True)
+        self.task3_var = tk.BooleanVar(value=True)
+        self.task4_var = tk.BooleanVar(value=True)
 
         self._build_ui()
         self._bind_events()
@@ -56,7 +57,7 @@ class LarkSyncApp:
 
     def _build_ui(self):
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(2, weight=1)
+        self.root.rowconfigure(4, weight=1)
 
         top = ttk.Frame(self.root, padding=16)
         top.grid(row=0, column=0, sticky="nsew")
@@ -111,29 +112,39 @@ class LarkSyncApp:
         )
         tip_label.grid(row=2, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
-        self.update_published_check = ttk.Checkbutton(
-            input_frame,
-            text='更新已发布状态（同步时将"已发布"的博主标记到"是否已发布"列）',
-            variable=self.update_published_var
-        )
-        self.update_published_check.grid(row=3, column=0, columnspan=4, sticky="w", pady=(12, 0))
+        task_frame = ttk.LabelFrame(self.root, text="任务选择", padding=16)
+        task_frame.grid(row=2, column=0, sticky="ew", padx=16)
 
-        self.update_koc_status_check = ttk.Checkbutton(
-            input_frame,
-            text='KOC或KOL地址为抠图时，更新气源为"无需收集"、快递状态为"无需配送产品"、样机情况为"无样机"',
-            variable=self.update_koc_status_var
+        self.task1_check = ttk.Checkbutton(
+            task_frame,
+            text='任务1: 更新小红书确认执行sheet (二核表→确认执行表)',
+            variable=self.task1_var
         )
-        self.update_koc_status_check.grid(row=4, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        self.task1_check.grid(row=0, column=0, sticky="w", pady=4)
 
-        self.update_modify_flag_check = ttk.Checkbutton(
-            input_frame,
-            text='更新确认执行表的"是否修改"列（KOL且地址非抠图的数据标记为"是"）',
-            variable=self.update_modify_flag_var
+        self.task2_check = ttk.Checkbutton(
+            task_frame,
+            text='任务2: 更新抖音确认执行sheet (二核表→确认执行表)',
+            variable=self.task2_var
         )
-        self.update_modify_flag_check.grid(row=5, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        self.task2_check.grid(row=1, column=0, sticky="w", pady=4)
+
+        self.task3_check = ttk.Checkbutton(
+            task_frame,
+            text='任务3: 更新小红书机器流转sheet (确认执行表→机器流转规划)',
+            variable=self.task3_var
+        )
+        self.task3_check.grid(row=2, column=0, sticky="w", pady=4)
+
+        self.task4_check = ttk.Checkbutton(
+            task_frame,
+            text='任务4: 更新抖音机器流转sheet (确认执行表→机器流转规划)',
+            variable=self.task4_var
+        )
+        self.task4_check.grid(row=3, column=0, sticky="w", pady=4)
 
         action_bar = ttk.Frame(self.root, padding=(16, 12))
-        action_bar.grid(row=2, column=0, sticky="ew")
+        action_bar.grid(row=3, column=0, sticky="ew")
         action_bar.columnconfigure(1, weight=1)
 
         self.run_button = ttk.Button(action_bar, text="开始同步", command=self._start_run)
@@ -144,7 +155,7 @@ class LarkSyncApp:
         )
 
         log_frame = ttk.LabelFrame(self.root, text="运行日志", padding=16)
-        log_frame.grid(row=3, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        log_frame.grid(row=4, column=0, sticky="nsew", padx=16, pady=(0, 16))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
@@ -196,9 +207,10 @@ class LarkSyncApp:
             messagebox.showerror("参数错误", str(exc))
             return
 
-        update_published = "1" if self.update_published_var.get() else "0"
-        update_koc_status = "1" if self.update_koc_status_var.get() else "0"
-        update_modify_flag = "1" if self.update_modify_flag_var.get() else "0"
+        update_published = "1" if self.task1_var.get() else "0"
+        update_koc_status = "1" if self.task2_var.get() else "0"
+        update_modify_flag = "1" if self.task3_var.get() else "0"
+        task4_flag = "1" if self.task4_var.get() else "0"
 
         python_exec = resolve_cli_python()
         command = [
@@ -211,7 +223,8 @@ class LarkSyncApp:
             str(dy_4),
             update_published,
             update_koc_status,
-            update_modify_flag
+            update_modify_flag,
+            task4_flag
         ]
 
         self.log_text.configure(state="normal")

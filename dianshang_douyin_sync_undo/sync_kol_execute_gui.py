@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-小红书KOL执行表同步工具 - GUI启动器
+抖音KOL执行表同步工具 - GUI启动器
 """
 
 import os
@@ -31,9 +31,9 @@ def resolve_cli_python():
 class SyncKolApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("小红书KOL执行表同步工具")
-        self.root.geometry("800x560")
-        self.root.minsize(700, 480)
+        self.root.title("抖音KOL执行表同步工具")
+        self.root.geometry("800x520")
+        self.root.minsize(700, 450)
 
         self.process = None
         self.worker_thread = None
@@ -41,7 +41,6 @@ class SyncKolApp:
 
         self.task1_var = tk.BooleanVar(value=True)
         self.task2_var = tk.BooleanVar(value=True)
-        self.task3_var = tk.BooleanVar(value=True)
 
         self._build_ui()
         self.root.after(150, self._drain_log_queue)
@@ -55,12 +54,12 @@ class SyncKolApp:
         top.grid(row=0, column=0, sticky="nsew")
         top.columnconfigure(1, weight=1)
 
-        title = ttk.Label(top, text="小红书KOL执行表同步", font=("Microsoft YaHei UI", 16, "bold"))
+        title = ttk.Label(top, text="抖音KOL执行表同步", font=("Microsoft YaHei UI", 16, "bold"))
         title.grid(row=0, column=0, columnspan=3, sticky="w")
 
         desc = ttk.Label(
             top,
-            text="从二核-KOL同步到确认执行-KOL-4月/5月，再同步到机器流转统计",
+            text="从抖音提报-KOL同步到确认执行-抖音-3月/4月/5月，再同步到机器流转统计3-4月",
         )
         desc.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 14))
 
@@ -69,30 +68,22 @@ class SyncKolApp:
 
         ttk.Checkbutton(
             task_frame,
-            text="任务1: 二核-KOL → 确认执行-KOL-4月",
+            text="任务1: 抖音提报-KOL → 确认执行-抖音-3月/4月/5月",
             variable=self.task1_var,
         ).grid(row=0, column=0, sticky="w", pady=4)
 
         ttk.Checkbutton(
             task_frame,
-            text="任务2: 二核-KOL → 确认执行-KOL-5月",
+            text="任务2: 确认执行-抖音-3月/4月/5月 → 机器流转统计3-4月",
             variable=self.task2_var,
         ).grid(row=1, column=0, sticky="w", pady=4)
-
-        ttk.Checkbutton(
-            task_frame,
-            text="任务3: 确认执行-KOL-4月/5月 → 机器流转统计",
-            variable=self.task3_var,
-        ).grid(row=2, column=0, sticky="w", pady=4)
 
         mapping_frame = ttk.LabelFrame(self.root, text="列映射说明", padding=12)
         mapping_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 0))
 
         mapping_text = (
-            "任务1&2: 小红书昵称→小红书昵称, 博主ID→ID, 蒲公英链接→蒲公英链接, "
-            "主页链接→主页链接, 来源→来源, 预计档期→预计档期, 形式→形式, 达人平台裸价→达人平台裸价\n"
-            "任务3: 博主→小红书昵称, 燃气类型→气源, 地址/收件人/联系电话→产品邮寄地址, "
-            "是否已发布→稿件进度(已发布=是), 发布日期→档期, 是否需要寄走机器=是"
+            "任务1: KOL名称→KOL/KOC名称, 主页链接→主页链接, ID→ID, 合作形式→合作形式\n"
+            "任务2: 博主→KOL/KOC名称, 燃气类型→气源, 地址→产品邮寄地址, 是否已发布→审核进度(已发布=是), 发布时间→发布时间"
         )
         ttk.Label(mapping_frame, text=mapping_text, wraplength=700, foreground="gray", font=("Microsoft YaHei UI", 9)).grid(
             row=0, column=0, sticky="w"
@@ -144,8 +135,6 @@ class SyncKolApp:
             tasks += "1"
         if self.task2_var.get():
             tasks += "2"
-        if self.task3_var.get():
-            tasks += "3"
 
         if not tasks:
             messagebox.showwarning("提示", "请至少选择一个同步任务")
