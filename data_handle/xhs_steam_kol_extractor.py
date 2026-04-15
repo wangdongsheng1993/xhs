@@ -602,6 +602,23 @@ def get_homepage_url_from_profile_click(context, page, red_id):
     return ""
 
 
+def get_kol_type_from_page(page):
+    """从页面 .blogger-tag-list 提取第一个标签作为 KOL 类型"""
+    return (
+        page.evaluate(
+            """
+            () => {
+                const tagList = document.querySelector('.blogger-tag-list');
+                if (!tagList) return '';
+                const firstTag = tagList.querySelector('span, li, a, div');
+                return firstTag ? (firstTag.textContent || '').trim() : '';
+            }
+            """
+        )
+        or ""
+    )
+
+
 def goto_with_retry(page, url, wait_until="domcontentloaded", timeout=30000, retries=2):
     last_error = None
     for attempt in range(retries + 1):
@@ -712,6 +729,7 @@ def pick_kitchen_note(notes):
 STEAM_COMPLETED_FIELDS = [
     "主页链接",
     "厨房场景图",
+    "KOL类型",
     "粉丝量（W）",
     "平台价格",
     "女粉占比",
@@ -914,6 +932,12 @@ def run_extraction():
                         "赞藏量（W）",
                         parse_page_w_value(likes_text),
                     )
+
+                # KOL类型
+                kol_type = get_kol_type_from_page(page)
+                if kol_type and headers.get("KOL类型"):
+                    set_cell(ws, headers, row_idx, "KOL类型", kol_type)
+                    print(f"  - 抓取KOL类型: {kol_type}")
 
                 # 平台价格与合作形式
                 cooperation_form = infer_cooperation_form_from_notes(
