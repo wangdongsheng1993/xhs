@@ -5,6 +5,8 @@
 """
 
 import json
+import logging
+import os
 import re
 import shutil
 import subprocess
@@ -12,7 +14,23 @@ import sys
 from datetime import datetime, timedelta
 
 # 配置
-SPREADSHEET_TOKEN = "ScEkwBLZDizM85kvRhpcnO7Lnkr"
+SPREADSHEET_TOKEN = "EEzYwZNowie2ALkTeOecNQSTnAf"
+
+# 日志配置
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync_machine_plan.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# API调用缓存
+_sheet_info_cache = None
+_header_mapping_cache = {}
 
 
 def _configure_console_encoding():
@@ -155,6 +173,20 @@ SOURCE_SHEETS = {
         "platform": "小红书",
         "month": "4月"
     },
+    "小红书确认执行5月": {
+        "sheet_id": "OJdYYD",
+        "start_row": None,
+        "header_row": 2,
+        "platform": "小红书",
+        "month": "5月"
+    },
+    "小红书确认执行6月": {
+        "sheet_id": "NUdPfH",
+        "start_row": None,
+        "header_row": 2,
+        "platform": "小红书",
+        "month": "6月"
+    },
     "3月抖音确认执行": {
         "sheet_id": "f08bd2",
         "start_row": None,
@@ -168,25 +200,44 @@ SOURCE_SHEETS = {
         "header_row": 2,
         "platform": "抖音",
         "month": "4月"
+    },
+    "5月抖音确认执行": {
+        "sheet_id": "LoouEx",
+        "start_row": None,
+        "header_row": 2,
+        "platform": "抖音",
+        "month": "5月"
+    },
+    "6月抖音确认执行": {
+        "sheet_id": "XpU78a",
+        "start_row": None,
+        "header_row": 2,
+        "platform": "抖音",
+        "month": "6月"
     }
 }
 
 # 目标Sheet配置 - 机器流转规划
 # 写入时对应4列: A平台(小红书/抖音) B博主(昵称) C燃气类型(气源) D地址(产品邮寄地址)
 TARGET_SHEETS = {
-    "3月": {"sheet_id": "98jnHp"},  # 机器流转规划3月 Sheet
-    "4月": {"sheet_id": "FkznaW"}  # 机器流转规划4月 Sheet
+    "3月": {"sheet_id": "98jnHp"},
+    "4月": {"sheet_id": "FkznaW"},
+    "5月": {"sheet_id": "cynq9c"}
 }
 
 # 二核表配置 - 用于同步到确认执行表
 ERHE_SHEETS = {
     "小红书二核表": {
         "sheet_id": "2kiAq6",
-        "header_row": 1
+        "header_row": 1,
+        "platform": "小红书",
+        "target_sheets": ["小红书确认执行4月", "小红书确认执行5月", "小红书确认执行6月"]
     },
-    "抖音二核表": {
-        "sheet_id": "jRY56A",
-        "header_row": 2
+    "抖音二核表-4-6月": {
+        "sheet_id": "v4UEkI",
+        "header_row": 1,
+        "platform": "抖音",
+        "target_sheets": ["3月抖音确认执行", "4月抖音确认执行", "5月抖音确认执行", "6月抖音确认执行"]
     }
 }
 
@@ -194,19 +245,38 @@ ERHE_SHEETS = {
 CONFIRM_SHEETS = {
     "小红书确认执行4月": {
         "sheet_id": "TDxBlT",
-        "header_row": 2
+        "header_row": 2,
+        "platform": "小红书"
     },
     "小红书确认执行5月": {
         "sheet_id": "OJdYYD",
-        "header_row": 2
+        "header_row": 2,
+        "platform": "小红书"
+    },
+    "小红书确认执行6月": {
+        "sheet_id": "NUdPfH",
+        "header_row": 2,
+        "platform": "小红书"
     },
     "3月抖音确认执行": {
         "sheet_id": "f08bd2",
-        "header_row": 1
+        "header_row": 1,
+        "platform": "抖音"
     },
     "4月抖音确认执行": {
         "sheet_id": "iFO2b6",
-        "header_row": 2
+        "header_row": 2,
+        "platform": "抖音"
+    },
+    "5月抖音确认执行": {
+        "sheet_id": "LoouEx",
+        "header_row": 2,
+        "platform": "抖音"
+    },
+    "6月抖音确认执行": {
+        "sheet_id": "XpU78a",
+        "header_row": 2,
+        "platform": "抖音"
     }
 }
 
@@ -228,13 +298,27 @@ ERHE_TO_CONFIRM_MAPPING_DOUYIN = {
     "平台价（平台裸价）": "平台价格"
 }
 
+# 二核表到确认执行表的同步映射
+# 格式: 二核表名称 -> {"targets": [确认执行表名称列表], "mapping": 字段映射}
+ERHE_SYNC_CONFIG = {
+    "小红书二核表": {
+        "targets": ["小红书确认执行4月", "小红书确认执行5月", "小红书确认执行6月"],
+        "mapping": ERHE_TO_CONFIRM_MAPPING
+    },
+    "抖音二核表-4-6月": {
+        "targets": ["3月抖音确认执行", "4月抖音确认执行", "5月抖音确认执行", "6月抖音确认执行"],
+        "mapping": ERHE_TO_CONFIRM_MAPPING_DOUYIN
+    }
+}
+
 
 def run_lark_cli(cmd):
     """执行lark-cli命令"""
+    logger.debug(f"执行命令: {cmd}")
     result = subprocess.run(cmd, shell=True, capture_output=True)
     if result.returncode != 0:
-        print(f"命令执行失败: {cmd}")
-        print(f"错误: {result.stderr.decode('utf-8', errors='replace')}")
+        logger.error(f"命令执行失败: {cmd}")
+        logger.error(f"错误: {result.stderr.decode('utf-8', errors='replace')}")
         return None
     stdout = result.stdout.decode('utf-8', errors='replace')
     return json.loads(stdout)
@@ -268,7 +352,28 @@ def lark_sheets_write(target_sheet_id, range_str, values_2d):
         "--values",
         payload,
     ]
+    logger.debug(f"写入数据: sheet={target_sheet_id}, range={range_str}, rows={len(values_2d)}")
     return subprocess.run(argv, capture_output=True)
+
+
+def get_sheet_info():
+    """获取表格信息（带缓存）"""
+    global _sheet_info_cache
+    if _sheet_info_cache is not None:
+        return _sheet_info_cache
+    
+    cmd = f'lark-cli sheets +info --spreadsheet-token {SPREADSHEET_TOKEN}'
+    result = run_lark_cli(cmd)
+    if result:
+        _sheet_info_cache = result
+    return _sheet_info_cache
+
+
+def clear_cache():
+    """清除所有缓存"""
+    global _sheet_info_cache, _header_mapping_cache
+    _sheet_info_cache = None
+    _header_mapping_cache = {}
 
 
 def index_to_col(n):
@@ -282,7 +387,11 @@ def index_to_col(n):
 
 
 def get_header_mapping(sheet_id, header_row=2):
-    """读取表头，返回精确列名匹配的索引"""
+    """读取表头，返回精确列名匹配的索引（带缓存）"""
+    cache_key = f"{sheet_id}_{header_row}"
+    if cache_key in _header_mapping_cache:
+        return _header_mapping_cache[cache_key]
+    
     range_str = f"{sheet_id}!A{header_row}:BZ{header_row}"
     cmd = f'lark-cli sheets +read --spreadsheet-token {SPREADSHEET_TOKEN} --sheet-id {sheet_id} --range "{range_str}"'
     result = run_lark_cli(cmd)
@@ -294,45 +403,77 @@ def get_header_mapping(sheet_id, header_row=2):
     if not values:
         return {}
 
-    header_row = values[0]
+    header_row_data = values[0]
     mapping = {}
 
-    for idx, cell in enumerate(header_row):
+    for idx, cell in enumerate(header_row_data):
         if cell is None:
             continue
         cell_str = str(cell).strip()
         mapping[cell_str] = idx
 
+    _header_mapping_cache[cache_key] = mapping
     return mapping
 
 
 def get_target_header_mapping(target_sheet_id, header_row=1):
     """
-    读取目标表表头，返回列名到索引的映射
+    读取目标表表头，返回列名到索引的映射（带缓存）
 
     用于写入时根据列名动态匹配目标列位置
     """
-    range_str = f"{target_sheet_id}!A{header_row}:BZ{header_row}"
-    cmd = f'lark-cli sheets +read --spreadsheet-token {SPREADSHEET_TOKEN} --sheet-id {target_sheet_id} --range "{range_str}"'
-    result = run_lark_cli(cmd)
+    return get_header_mapping(target_sheet_id, header_row)
 
-    if not result or not result.get("ok"):
-        return {}
 
-    values = result.get("data", {}).get("valueRange", {}).get("values", [])
-    if not values:
-        return {}
-
-    header_row = values[0]
-    mapping = {}
-
-    for idx, cell in enumerate(header_row):
-        if cell is None:
+def sync_confirm_to_machine_plan(platform):
+    """
+    从确认执行表同步数据到机器流转规划表（通用函数）
+    
+    Args:
+        platform: 平台类型 ("小红书" 或 "抖音")
+    
+    Returns:
+        dict: 按月份分组的数据 {月份: [数据列表]}
+    """
+    logger.info(f"开始同步{platform}确认执行表到机器流转规划...")
+    data_by_month = {}
+    
+    for name, config in SOURCE_SHEETS.items():
+        if config["platform"] != platform:
             continue
-        cell_str = str(cell).strip()
-        mapping[cell_str] = idx
-
-    return mapping
+        if config["start_row"] is None:
+            continue
+        
+        logger.info(f"处理 {name}...")
+        print(f"\n处理 {name}...")
+        
+        col_map = get_header_mapping(config["sheet_id"], config["header_row"])
+        logger.debug(f"  可用列: {list(col_map.keys())[:10]}...")
+        print(f"  可用列: {list(col_map.keys())[:10]}...")
+        
+        rows = read_sheet_data(config["sheet_id"], config["start_row"])
+        logger.info(f"  读取到 {len(rows)} 行")
+        print(f"  读取到 {len(rows)} 行")
+        
+        filtered = filter_and_transform(rows, col_map, config["platform"], config["month"])
+        logger.info(f"  筛选后 {len(filtered)} 行")
+        print(f"  筛选后 {len(filtered)} 行")
+        
+        month = config["month"]
+        if month not in data_by_month:
+            data_by_month[month] = []
+        data_by_month[month].extend(filtered)
+    
+    for month, data in data_by_month.items():
+        logger.info(f"{platform}{month}数据共 {len(data)} 行")
+        print(f"\n{platform}{month}数据共 {len(data)} 行")
+        if month in TARGET_SHEETS:
+            append_to_target(data, TARGET_SHEETS[month]["sheet_id"])
+        else:
+            logger.warning(f"  跳过: TARGET_SHEETS中未配置'{month}'")
+            print(f"  跳过: TARGET_SHEETS中未配置'{month}'")
+    
+    return data_by_month
 
 
 def read_sheet_data(sheet_id, start_row):
@@ -414,7 +555,7 @@ def find_published_bloggers(rows, col_map):
     """找出发布状态为"已发布"的博主"""
     kol_col = col_map.get("达人量级")
     nickname_col = col_map.get("昵称")
-    publish_col = col_map.get("发布状态")
+    publish_col = col_map.get("发布状态") or col_map.get("稿件状态")
     addr_col = col_map.get("产品邮寄地址")
 
     if kol_col is None or nickname_col is None or publish_col is None:
@@ -863,30 +1004,17 @@ def sync_erhe_to_confirm(source_name, target_name, col_mapping):
     
     updated_count = 0
     for row_num, changes in to_update:
-        change_indices = [v[0] for v in changes.values()]
-        r_min, r_max = min(change_indices), max(change_indices)
+        sorted_cols = sorted(changes.items(), key=lambda x: x[1][0])
         
-        _, orig_row_values = existing_rows.get(
-            next(k for k, v in existing_rows.items() if v[0] == row_num),
-            (row_num, [])
-        )
-        
-        row_vals = []
-        for c_idx in range(r_min, r_max + 1):
-            col_name = next((n for n, i in target_col_indices.items() if i == c_idx), None)
-            if col_name in changes:
-                row_vals.append(changes[col_name][1])
-            else:
-                row_vals.append(orig_row_values[c_idx - min_col] if len(orig_row_values) > (c_idx - min_col) else "")
-        
-        range_str = f"{index_to_col(r_min)}{row_num}:{index_to_col(r_max)}{row_num}"
-        result = lark_sheets_write(target_cfg["sheet_id"], range_str, [row_vals])
-        if result.returncode == 0:
-            resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
-            if resp.get("ok"):
-                updated_count += 1
+        for col_name, (col_idx, new_val) in sorted_cols:
+            range_str = f"{index_to_col(col_idx)}{row_num}:{index_to_col(col_idx)}{row_num}"
+            result = lark_sheets_write(target_cfg["sheet_id"], range_str, [[new_val]])
+            if result.returncode == 0:
+                resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
+                if resp.get("ok"):
+                    updated_count += 1
     
-    print(f"  已更新 {updated_count} 行")
+    print(f"  已更新 {updated_count} 个单元格")
     
     source_nicknames = set(key_val for key_val, _ in source_data)
     missing_in_source = []
@@ -988,13 +1116,75 @@ def get_sheet_row_count(sheet_id):
     return 1
 
 
+def load_config_from_file(config_path):
+    """从配置文件加载参数"""
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        logger.info(f"从配置文件加载参数: {config_path}")
+        return config
+    except Exception as e:
+        logger.error(f"加载配置文件失败: {e}")
+        return None
+
+
+def save_config_to_file(config_path, config):
+    """保存参数到配置文件"""
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        logger.info(f"配置已保存到: {config_path}")
+    except Exception as e:
+        logger.error(f"保存配置文件失败: {e}")
+
+
 def main():
     import sys
     _configure_console_encoding()
 
-    if len(sys.argv) < 5:
-        print("用法: python sync_machine_plan.py <小红书3月起始行> <小红书4月起始行> <抖音3月起始行> <抖音4月起始行> [任务1:0或1] [任务2:0或1] [任务3:0或1] [任务4:0或1]")
-        print("示例: python sync_machine_plan.py 3 5 2 8 1 1 1 1")
+    config_file = None
+    config_file_arg_idx = None
+    
+    for i, arg in enumerate(sys.argv):
+        if arg == "--config" and i + 1 < len(sys.argv):
+            config_file = sys.argv[i + 1]
+            config_file_arg_idx = i
+            break
+    
+    if config_file:
+        config = load_config_from_file(config_file)
+        if config:
+            start_rows = config.get("start_rows", {})
+            tasks = config.get("tasks", [1, 1, 1, 1])
+            
+            for name, row in start_rows.items():
+                if name in SOURCE_SHEETS:
+                    SOURCE_SHEETS[name]["start_row"] = row
+            
+            task1, task2, task3, task4 = tasks[0], tasks[1], tasks[2], tasks[3]
+        else:
+            sys.exit(1)
+    elif len(sys.argv) < 9:
+        print("用法: python sync_machine_plan.py <小红书3月起始行> <小红书4月起始行> <小红书5月起始行> <小红书6月起始行> <抖音3月起始行> <抖音4月起始行> <抖音5月起始行> <抖音6月起始行> [任务1:0或1] [任务2:0或1] [任务3:0或1] [任务4:0或1]")
+        print("   或: python sync_machine_plan.py --config <配置文件.json>")
+        print("")
+        print("示例: python sync_machine_plan.py 3 5 4 2 2 8 6 3 1 1 1 1")
+        print("示例: python sync_machine_plan.py --config sync_config.json")
+        print("")
+        print("配置文件格式 (sync_config.json):")
+        print('{')
+        print('  "start_rows": {')
+        print('    "小红书确认执行3月": 3,')
+        print('    "小红书确认执行4月": 5,')
+        print('    "小红书确认执行5月": 4,')
+        print('    "小红书确认执行6月": 2,')
+        print('    "3月抖音确认执行": 2,')
+        print('    "4月抖音确认执行": 8,')
+        print('    "5月抖音确认执行": 6,')
+        print('    "6月抖音确认执行": 3')
+        print('  },')
+        print('  "tasks": [1, 1, 1, 1]')
+        print('}')
         print("")
         print("任务说明:")
         print("  任务1: 更新小红书确认执行sheet (二核表→确认执行表)")
@@ -1002,18 +1192,29 @@ def main():
         print("  任务3: 更新小红书机器流转sheet (确认执行表→机器流转规划)")
         print("  任务4: 更新抖音机器流转sheet (确认执行表→机器流转规划)")
         sys.exit(1)
+    else:
+        SOURCE_SHEETS["小红书确认执行3月"]["start_row"] = int(sys.argv[1])
+        SOURCE_SHEETS["小红书确认执行4月"]["start_row"] = int(sys.argv[2])
+        SOURCE_SHEETS["小红书确认执行5月"]["start_row"] = int(sys.argv[3])
+        SOURCE_SHEETS["小红书确认执行6月"]["start_row"] = int(sys.argv[4])
+        SOURCE_SHEETS["3月抖音确认执行"]["start_row"] = int(sys.argv[5])
+        SOURCE_SHEETS["4月抖音确认执行"]["start_row"] = int(sys.argv[6])
+        SOURCE_SHEETS["5月抖音确认执行"]["start_row"] = int(sys.argv[7])
+        SOURCE_SHEETS["6月抖音确认执行"]["start_row"] = int(sys.argv[8])
 
-    SOURCE_SHEETS["小红书确认执行3月"]["start_row"] = int(sys.argv[1])
-    SOURCE_SHEETS["小红书确认执行4月"]["start_row"] = int(sys.argv[2])
-    SOURCE_SHEETS["3月抖音确认执行"]["start_row"] = int(sys.argv[3])
-    SOURCE_SHEETS["4月抖音确认执行"]["start_row"] = int(sys.argv[4])
+        task1 = int(sys.argv[9]) if len(sys.argv) > 9 else 1
+        task2 = int(sys.argv[10]) if len(sys.argv) > 10 else 1
+        task3 = int(sys.argv[11]) if len(sys.argv) > 11 else 1
+        task4 = int(sys.argv[12]) if len(sys.argv) > 12 else 1
 
-    # 任务开关，默认全部执行
-    task1 = int(sys.argv[5]) if len(sys.argv) > 5 else 1
-    task2 = int(sys.argv[6]) if len(sys.argv) > 6 else 1
-    task3 = int(sys.argv[7]) if len(sys.argv) > 7 else 1
-    task4 = int(sys.argv[8]) if len(sys.argv) > 8 else 1
-
+    logger.info("="*60)
+    logger.info("任务执行计划:")
+    logger.info(f"  任务1 (更新小红书确认执行sheet): {'是' if task1 else '否'}")
+    logger.info(f"  任务2 (更新抖音确认执行sheet): {'是' if task2 else '否'}")
+    logger.info(f"  任务3 (更新小红书机器流转sheet): {'是' if task3 else '否'}")
+    logger.info(f"  任务4 (更新抖音机器流转sheet): {'是' if task4 else '否'}")
+    logger.info("="*60)
+    
     print("="*60)
     print("任务执行计划:")
     print(f"  任务1 (更新小红书确认执行sheet): {'是' if task1 else '否'}")
@@ -1027,96 +1228,62 @@ def main():
         print("\n" + "="*60)
         print("执行任务1: 更新小红书确认执行sheet")
         print("="*60)
-        sync_erhe_to_confirm("小红书二核表", "小红书确认执行4月", ERHE_TO_CONFIRM_MAPPING)
-        sync_erhe_to_confirm("小红书二核表", "小红书确认执行5月", ERHE_TO_CONFIRM_MAPPING)
+        erhe_name = "小红书二核表"
+        if erhe_name in ERHE_SYNC_CONFIG:
+            for target_name in ERHE_SYNC_CONFIG[erhe_name]["targets"]:
+                mapping = ERHE_SYNC_CONFIG[erhe_name]["mapping"]
+                sync_erhe_to_confirm(erhe_name, target_name, mapping)
 
     # 任务2: 更新抖音确认执行sheet
     if task2:
         print("\n" + "="*60)
         print("执行任务2: 更新抖音确认执行sheet")
         print("="*60)
-        sync_erhe_to_confirm("抖音二核表", "3月抖音确认执行", ERHE_TO_CONFIRM_MAPPING_DOUYIN)
-        sync_erhe_to_confirm("抖音二核表", "4月抖音确认执行", ERHE_TO_CONFIRM_MAPPING_DOUYIN)
+        erhe_name = "抖音二核表-4-6月"
+        if erhe_name in ERHE_SYNC_CONFIG:
+            for target_name in ERHE_SYNC_CONFIG[erhe_name]["targets"]:
+                mapping = ERHE_SYNC_CONFIG[erhe_name]["mapping"]
+                sync_erhe_to_confirm(erhe_name, target_name, mapping)
 
     # 任务3: 更新小红书机器流转sheet
     if task3:
         print("\n" + "="*60)
         print("执行任务3: 更新小红书机器流转sheet")
         print("="*60)
-        
-        data_3月_xhs = []
-        data_4月_xhs = []
-        
-        for name in ["小红书确认执行3月", "小红书确认执行4月"]:
-            config = SOURCE_SHEETS[name]
-            print(f"\n处理 {name}...")
-            
-            col_map = get_header_mapping(config["sheet_id"], config["header_row"])
-            print(f"  可用列: {list(col_map.keys())[:10]}...")
-            
-            rows = read_sheet_data(config["sheet_id"], config["start_row"])
-            print(f"  读取到 {len(rows)} 行")
-            
-            filtered = filter_and_transform(rows, col_map, config["platform"], config["month"])
-            print(f"  筛选后 {len(filtered)} 行")
-            
-            if config["month"] == "3月":
-                data_3月_xhs.extend(filtered)
-            else:
-                data_4月_xhs.extend(filtered)
-        
-        print(f"\n小红书3月数据共 {len(data_3月_xhs)} 行")
-        append_to_target(data_3月_xhs, TARGET_SHEETS["3月"]["sheet_id"])
-        
-        print(f"小红书4月数据共 {len(data_4月_xhs)} 行")
-        append_to_target(data_4月_xhs, TARGET_SHEETS["4月"]["sheet_id"])
+        sync_confirm_to_machine_plan("小红书")
 
     # 任务4: 更新抖音机器流转sheet
     if task4:
         print("\n" + "="*60)
         print("执行任务4: 更新抖音机器流转sheet")
         print("="*60)
-        
-        data_3月_dy = []
-        data_4月_dy = []
-        
-        for name in ["3月抖音确认执行", "4月抖音确认执行"]:
-            config = SOURCE_SHEETS[name]
-            print(f"\n处理 {name}...")
-            
-            col_map = get_header_mapping(config["sheet_id"], config["header_row"])
-            print(f"  可用列: {list(col_map.keys())[:10]}...")
-            
-            rows = read_sheet_data(config["sheet_id"], config["start_row"])
-            print(f"  读取到 {len(rows)} 行")
-            
-            filtered = filter_and_transform(rows, col_map, config["platform"], config["month"])
-            print(f"  筛选后 {len(filtered)} 行")
-            
-            if config["month"] == "3月":
-                data_3月_dy.extend(filtered)
-            else:
-                data_4月_dy.extend(filtered)
-        
-        print(f"\n抖音3月数据共 {len(data_3月_dy)} 行")
-        append_to_target(data_3月_dy, TARGET_SHEETS["3月"]["sheet_id"])
-        
-        print(f"抖音4月数据共 {len(data_4月_dy)} 行")
-        append_to_target(data_4月_dy, TARGET_SHEETS["4月"]["sheet_id"])
+        sync_confirm_to_machine_plan("抖音")
 
-    # 更新已发布状态（任务3或4执行时才更新）
-    if task3 or task4:
+    # 更新已发布状态（任务3或4执行时才更新，按平台隔离）
+    if task3:
         print("\n" + "="*60)
-        print("更新已发布状态...")
+        print("更新已发布状态(小红书)...")
         print("="*60)
-        update_published_status()
+        update_published_status("小红书")
+    
+    if task4:
+        print("\n" + "="*60)
+        print("更新已发布状态(抖音)...")
+        print("="*60)
+        update_published_status("抖音")
 
-    # 检查并更新需安排流转机器状态（任务3或4执行时才更新）
-    if task3 or task4:
+    # 检查并更新需安排流转机器状态（任务3或4执行时才更新，按平台隔离）
+    if task3:
         print("\n" + "="*60)
-        print("更新流转沟通情况...")
+        print("更新流转沟通情况(小红书)...")
         print("="*60)
-        update_luzhu_status()
+        update_luzhu_status("小红书")
+    
+    if task4:
+        print("\n" + "="*60)
+        print("更新流转沟通情况(抖音)...")
+        print("="*60)
+        update_luzhu_status("抖音")
 
     print("\n" + "="*60)
     print("所有任务执行完成!")
@@ -1132,20 +1299,30 @@ def main():
     print("\n提示: 如果有博主未同步，请检查二核表中是否存在该博主数据")
 
 
-def update_published_status():
-    """更新已发布状态"""
+def update_published_status(platform=None):
+    """
+    更新已发布状态
+    
+    Args:
+        platform: 平台类型 ("小红书" 或 "抖音")，为 None 时更新所有平台
+    """
     print("\n" + "="*50)
-    print("更新已发布状态...")
+    print(f"更新已发布状态{f'({platform})' if platform else ''}...")
 
-    # 收集所有已发布的博主
-    published_3月 = set()
-    published_4月 = set()
-    all_kol_3月 = set()
-    all_kol_4月 = set()
+    published_by_month = {}
+    all_kol_by_month = {}
 
     for name, config in SOURCE_SHEETS.items():
         if config["start_row"] is None:
             continue
+        if platform and config.get("platform") != platform:
+            continue
+
+        month = config["month"]
+        if month not in published_by_month:
+            published_by_month[month] = set()
+        if month not in all_kol_by_month:
+            all_kol_by_month[month] = set()
 
         col_map = get_header_mapping(config["sheet_id"], config["header_row"])
         rows = read_sheet_data(config["sheet_id"], config["start_row"])
@@ -1169,26 +1346,16 @@ def update_published_status():
                 if "抠图" in address or "扣图" in address or address == "自有":
                     continue
                 
-                if config["month"] == "3月":
-                    all_kol_3月.add(nick)
-                else:
-                    all_kol_4月.add(nick)
+                all_kol_by_month[month].add(nick)
 
-        if config["month"] == "3月":
-            published_3月.update(published)
-        else:
-            published_4月.update(published)
+        published_by_month[month].update(published)
 
-    print(f"  3月已发布博主: {len(published_3月)} 个")
-    print(f"  4月已发布博主: {len(published_4月)} 个")
+    for month in published_by_month:
+        print(f"  {month}已发布博主: {len(published_by_month[month])} 个")
 
-    # 更新3月目标表
-    if all_kol_3月:
-        update_target_published(published_3月, all_kol_3月, TARGET_SHEETS["3月"]["sheet_id"])
-
-    # 更新4月目标表
-    if all_kol_4月:
-        update_target_published(published_4月, all_kol_4月, TARGET_SHEETS["4月"]["sheet_id"])
+    for month in all_kol_by_month:
+        if all_kol_by_month[month] and month in TARGET_SHEETS:
+            update_target_published(published_by_month.get(month, set()), all_kol_by_month[month], TARGET_SHEETS[month]["sheet_id"])
 
 
 def update_target_published(published_set, all_kol_set, target_sheet_id):
@@ -1208,16 +1375,16 @@ def update_target_published(published_set, all_kol_set, target_sheet_id):
 
     # 找到昵称列和是否已发布列的索引
     nickname_col = col_map.get("博主")
-    published_col = col_map.get("是否已发布")
+    published_col = col_map.get("是否已发布") or col_map.get("稿件状态")
 
     if nickname_col is None:
         print(f"  {target_sheet_id}: 未找到昵称列（尝试过：博主）")
         return
     if published_col is None:
-        print(f"  {target_sheet_id}: 未找到是否已发布列（尝试过：是否已发布）")
+        print(f"  {target_sheet_id}: 未找到发布状态列（尝试过：是否已发布、稿件状态）")
         return
 
-    print(f"  {target_sheet_id}: 昵称列={nickname_col}, 是否已发布列={published_col}")
+    print(f"  {target_sheet_id}: 昵称列={nickname_col}, 发布状态列={published_col}")
 
     # 获取目标表行数
     cmd = f'lark-cli sheets +info --spreadsheet-token {SPREADSHEET_TOKEN}'
@@ -1282,36 +1449,70 @@ def update_target_published(published_set, all_kol_set, target_sheet_id):
         return
 
     print(f"  {target_sheet_id}: 更新 {len(rows_to_update)} 行")
+    logger.info(f"  {target_sheet_id}: 更新 {len(rows_to_update)} 行已发布状态")
 
-    # 逐行更新是否已发布列
     published_col_letter = index_to_col(published_col)
-    for row_num, value in rows_to_update:
-        range_str = f"{target_sheet_id}!{published_col_letter}{row_num}:{published_col_letter}{row_num}"
-        result = lark_sheets_write(target_sheet_id, range_str, [[value]])
+    
+    if len(rows_to_update) <= 5:
+        for row_num, value in rows_to_update:
+            range_str = f"{target_sheet_id}!{published_col_letter}{row_num}:{published_col_letter}{row_num}"
+            result = lark_sheets_write(target_sheet_id, range_str, [[value]])
+            if result.returncode != 0:
+                logger.error(f"    行{row_num}更新失败")
+                print(f"    行{row_num}更新失败")
+            else:
+                resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
+                if not resp.get("ok"):
+                    logger.error(f"    行{row_num}更新失败")
+                    print(f"    行{row_num}更新失败")
+    else:
+        row_nums = [r[0] for r in rows_to_update]
+        min_row = min(row_nums)
+        max_row = max(row_nums)
+        
+        values_2d = []
+        row_to_value = {r[0]: r[1] for r in rows_to_update}
+        for row_num in range(min_row, max_row + 1):
+            if row_num in row_to_value:
+                values_2d.append([row_to_value[row_num]])
+            else:
+                values_2d.append([None])
+        
+        range_str = f"{target_sheet_id}!{published_col_letter}{min_row}:{published_col_letter}{max_row}"
+        result = lark_sheets_write(target_sheet_id, range_str, values_2d)
         if result.returncode != 0:
-            print(f"    行{row_num}更新失败")
+            logger.error(f"  批量更新失败")
+            print(f"  批量更新失败")
         else:
             resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
             if not resp.get("ok"):
-                print(f"    行{row_num}更新失败")
+                logger.error(f"  批量更新失败")
+                print(f"  批量更新失败")
+            else:
+                logger.info(f"  批量更新成功，共 {len(rows_to_update)} 行")
 
     print(f"  {target_sheet_id}: 已更新 {len(rows_to_update)} 行的已发布状态")
 
 
-def update_luzhu_status():
+def update_luzhu_status(platform=None):
     """
     检查发布时间，若发布时间距今小于10天且流转沟通情况列为空，
     则更新"需安排流转机器"，字体标红
 
     使用飞书原生API设置单元格样式（红色字体）
+    
+    Args:
+        platform: 平台类型 ("小红书" 或 "抖音")，为 None 时处理所有平台
     """
     print("\n" + "="*50)
-    print("检查并更新需安排流转机器状态...")
+    print(f"检查并更新需安排流转机器状态{f'({platform})' if platform else ''}...")
 
     from datetime import datetime
 
     for name, config in SOURCE_SHEETS.items():
         if config["start_row"] is None:
+            continue
+        if platform and config.get("platform") != platform:
             continue
 
         print(f"\n处理 {name}...")
@@ -1356,13 +1557,10 @@ def update_luzhu_status():
 
         print(f"  收集到 {len(blogger_publish_times)} 个博主发布时间")
 
-        # 更新对应目标表
-        if config["month"] == "3月":
-            target_sheet_id = TARGET_SHEETS["3月"]["sheet_id"]
-        else:
-            target_sheet_id = TARGET_SHEETS["4月"]["sheet_id"]
-
-        update_luzhu_in_target(target_sheet_id, blogger_publish_times)
+        month = config["month"]
+        if month in TARGET_SHEETS:
+            target_sheet_id = TARGET_SHEETS[month]["sheet_id"]
+            update_luzhu_in_target(target_sheet_id, blogger_publish_times)
 
 
 def update_luzhu_in_target(target_sheet_id, blogger_publish_times):

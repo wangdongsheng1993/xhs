@@ -16,7 +16,6 @@ from tkinter.scrolledtext import ScrolledText
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.join(BASE_DIR, "sync_machine_plan.py")
-SPREADSHEET_TOKEN = "VjIrs07udhzM85tkinZcX6wBnte"
 
 
 def resolve_cli_python():
@@ -43,8 +42,12 @@ class LarkSyncApp:
 
         self.xhs_3_row_var = tk.StringVar(value="3")
         self.xhs_4_row_var = tk.StringVar(value="3")
+        self.xhs_5_row_var = tk.StringVar(value="3")
+        self.xhs_6_row_var = tk.StringVar(value="3")
         self.douyin_3_row_var = tk.StringVar(value="2")
         self.douyin_4_row_var = tk.StringVar(value="3")
+        self.douyin_5_row_var = tk.StringVar(value="3")
+        self.douyin_6_row_var = tk.StringVar(value="3")
         self.task1_var = tk.BooleanVar(value=True)
         self.task2_var = tk.BooleanVar(value=True)
         self.task3_var = tk.BooleanVar(value=True)
@@ -76,33 +79,63 @@ class LarkSyncApp:
         input_frame.grid(row=1, column=0, sticky="ew", padx=16)
         input_frame.columnconfigure(1, weight=1)
         input_frame.columnconfigure(3, weight=1)
+        input_frame.columnconfigure(5, weight=1)
+        input_frame.columnconfigure(7, weight=1)
 
         ttk.Label(input_frame, text="小红书确认执行3月", font=("Microsoft YaHei UI", 10)).grid(
             row=0, column=0, sticky="w", pady=8
         )
         ttk.Entry(input_frame, textvariable=self.xhs_3_row_var, width=10).grid(
-            row=0, column=1, sticky="w", padx=(8, 24)
+            row=0, column=1, sticky="w", padx=(8, 16)
         )
 
         ttk.Label(input_frame, text="小红书确认执行4月", font=("Microsoft YaHei UI", 10)).grid(
             row=0, column=2, sticky="w", pady=8
         )
         ttk.Entry(input_frame, textvariable=self.xhs_4_row_var, width=10).grid(
-            row=0, column=3, sticky="w", padx=(8, 0)
+            row=0, column=3, sticky="w", padx=(8, 16)
+        )
+
+        ttk.Label(input_frame, text="小红书确认执行5月", font=("Microsoft YaHei UI", 10)).grid(
+            row=0, column=4, sticky="w", pady=8
+        )
+        ttk.Entry(input_frame, textvariable=self.xhs_5_row_var, width=10).grid(
+            row=0, column=5, sticky="w", padx=(8, 16)
+        )
+
+        ttk.Label(input_frame, text="小红书确认执行6月", font=("Microsoft YaHei UI", 10)).grid(
+            row=0, column=6, sticky="w", pady=8
+        )
+        ttk.Entry(input_frame, textvariable=self.xhs_6_row_var, width=10).grid(
+            row=0, column=7, sticky="w", padx=(8, 0)
         )
 
         ttk.Label(input_frame, text="3月抖音确认执行", font=("Microsoft YaHei UI", 10)).grid(
             row=1, column=0, sticky="w", pady=8
         )
         ttk.Entry(input_frame, textvariable=self.douyin_3_row_var, width=10).grid(
-            row=1, column=1, sticky="w", padx=(8, 24)
+            row=1, column=1, sticky="w", padx=(8, 16)
         )
 
         ttk.Label(input_frame, text="4月抖音确认执行", font=("Microsoft YaHei UI", 10)).grid(
             row=1, column=2, sticky="w", pady=8
         )
         ttk.Entry(input_frame, textvariable=self.douyin_4_row_var, width=10).grid(
-            row=1, column=3, sticky="w", padx=(8, 0)
+            row=1, column=3, sticky="w", padx=(8, 16)
+        )
+
+        ttk.Label(input_frame, text="5月抖音确认执行", font=("Microsoft YaHei UI", 10)).grid(
+            row=1, column=4, sticky="w", pady=8
+        )
+        ttk.Entry(input_frame, textvariable=self.douyin_5_row_var, width=10).grid(
+            row=1, column=5, sticky="w", padx=(8, 16)
+        )
+
+        ttk.Label(input_frame, text="6月抖音确认执行", font=("Microsoft YaHei UI", 10)).grid(
+            row=1, column=6, sticky="w", pady=8
+        )
+        ttk.Entry(input_frame, textvariable=self.douyin_6_row_var, width=10).grid(
+            row=1, column=7, sticky="w", padx=(8, 0)
         )
 
         tip_label = ttk.Label(
@@ -110,7 +143,7 @@ class LarkSyncApp:
             text="提示：起始行是数据开始的行号，不是表头行。从表头下一行开始填。",
             foreground="gray",
         )
-        tip_label.grid(row=2, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        tip_label.grid(row=2, column=0, columnspan=8, sticky="w", pady=(8, 0))
 
         task_frame = ttk.LabelFrame(self.root, text="任务选择", padding=16)
         task_frame.grid(row=2, column=0, sticky="ew", padx=16)
@@ -187,29 +220,33 @@ class LarkSyncApp:
         try:
             xhs_3 = int(self.xhs_3_row_var.get().strip())
             xhs_4 = int(self.xhs_4_row_var.get().strip())
+            xhs_5 = int(self.xhs_5_row_var.get().strip())
+            xhs_6 = int(self.xhs_6_row_var.get().strip())
             dy_3 = int(self.douyin_3_row_var.get().strip())
             dy_4 = int(self.douyin_4_row_var.get().strip())
+            dy_5 = int(self.douyin_5_row_var.get().strip())
+            dy_6 = int(self.douyin_6_row_var.get().strip())
         except ValueError:
             raise ValueError("起始行必须是数字")
 
-        if xhs_3 < 1 or xhs_4 < 1 or dy_3 < 1 or dy_4 < 1:
+        if xhs_3 < 1 or xhs_4 < 1 or xhs_5 < 1 or xhs_6 < 1 or dy_3 < 1 or dy_4 < 1 or dy_5 < 1 or dy_6 < 1:
             raise ValueError("起始行必须大于0")
 
-        return xhs_3, xhs_4, dy_3, dy_4
+        return xhs_3, xhs_4, xhs_5, xhs_6, dy_3, dy_4, dy_5, dy_6
 
     def _start_run(self):
         if self.worker_thread and self.worker_thread.is_alive():
             return
 
         try:
-            xhs_3, xhs_4, dy_3, dy_4 = self._validate_form()
+            xhs_3, xhs_4, xhs_5, xhs_6, dy_3, dy_4, dy_5, dy_6 = self._validate_form()
         except ValueError as exc:
             messagebox.showerror("参数错误", str(exc))
             return
 
-        update_published = "1" if self.task1_var.get() else "0"
-        update_koc_status = "1" if self.task2_var.get() else "0"
-        update_modify_flag = "1" if self.task3_var.get() else "0"
+        task1_flag = "1" if self.task1_var.get() else "0"
+        task2_flag = "1" if self.task2_var.get() else "0"
+        task3_flag = "1" if self.task3_var.get() else "0"
         task4_flag = "1" if self.task4_var.get() else "0"
 
         python_exec = resolve_cli_python()
@@ -219,11 +256,15 @@ class LarkSyncApp:
             SCRIPT_PATH,
             str(xhs_3),
             str(xhs_4),
+            str(xhs_5),
+            str(xhs_6),
             str(dy_3),
             str(dy_4),
-            update_published,
-            update_koc_status,
-            update_modify_flag,
+            str(dy_5),
+            str(dy_6),
+            task1_flag,
+            task2_flag,
+            task3_flag,
             task4_flag
         ]
 
