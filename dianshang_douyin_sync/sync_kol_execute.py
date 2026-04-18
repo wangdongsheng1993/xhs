@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # 常量配置
 # ============================================================
-DEFAULT_SPREADSHEET_TOKEN = "GmThwbD71ib4WWkI8Fcc8fTLnEf"
+DEFAULT_SPREADSHEET_TOKEN = "PY4ysYkCihuiyttOl3TcnKdpn0g"
 SPREADSHEET_TOKEN = DEFAULT_SPREADSHEET_TOKEN
 
 # Sheet配置 - 便于扩展新月份

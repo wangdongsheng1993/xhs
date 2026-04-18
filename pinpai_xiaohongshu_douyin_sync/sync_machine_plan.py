@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timedelta
 
 # 配置
-DEFAULT_SPREADSHEET_TOKEN = "IxmRw6cPMi7exjkyHCNciObInmc"
+DEFAULT_SPREADSHEET_TOKEN = "VjIrs07udhzM85tkinZcX6wBnte"
 SPREADSHEET_TOKEN = DEFAULT_SPREADSHEET_TOKEN
 
 # 日志配置

@@ -39,8 +39,8 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # 文档配置
 # ============================================================
-DEFAULT_SPREADSHEET_TOKEN = "HifSwDasHiPCtUkcEoAcfDi6nMe"
-DEFAULT_SPREADSHEET_TOKEN_MAR = "D8GlwSmi2iwZaYkZt9mcOcjmn4c"
+DEFAULT_SPREADSHEET_TOKEN = "Sh9RspVWeh2rPhtuPHIcGl40nIc"
+DEFAULT_SPREADSHEET_TOKEN_MAR = "Pi5csEYwGhEAThtc9NKcyx0Xn5c"
 SPREADSHEET_TOKEN = DEFAULT_SPREADSHEET_TOKEN
 SPREADSHEET_TOKEN_MAR = DEFAULT_SPREADSHEET_TOKEN_MAR
 
