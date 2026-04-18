@@ -3,9 +3,17 @@
 抖音KOL执行表同步脚本
 任务1: 从抖音提报-KOL同步到确认执行-抖音-3月/4月/5月
 任务2: 从确认执行表同步到机器流转统计3-4月
+
+优化内容:
+- 日志记录
+- API调用缓存
+- 批量写入优化
+- 配置文件支持
+- 重复代码抽象
 """
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -13,22 +21,45 @@ import subprocess
 import sys
 from datetime import datetime, date, timedelta
 
-SPREADSHEET_TOKEN = "GUsZwuKo7i6lxrkEpSqcEZRrnFf"
+# ============================================================
+# 日志配置
+# ============================================================
+LOG_FILE = "sync_kol_execute.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
+# ============================================================
+# 常量配置
+# ============================================================
+DEFAULT_SPREADSHEET_TOKEN = "GmThwbD71ib4WWkI8Fcc8fTLnEf"
+SPREADSHEET_TOKEN = DEFAULT_SPREADSHEET_TOKEN
+
+# Sheet配置 - 便于扩展新月份
 SHEETS = {
     "抖音提报-KOL": {"sheet_id": "c3cac9", "header_row": 1},
     "确认执行-抖音-3月": {"sheet_id": "6jbST9", "header_row": 1},
     "确认执行-抖音-4月": {"sheet_id": "7sKHAw", "header_row": 2},
     "确认执行-抖音-5月": {"sheet_id": "a12h5b", "header_row": 2},
+    "确认执行-抖音-6月": {"sheet_id": "Qd1wQU", "header_row": 2},
     "机器流转统计3-4月": {"sheet_id": "TyVk3J", "header_row": 1},
 }
 
+# 任务2源表配置
 TASK2_SOURCES = [
     {"sheet_id": "6jbST9", "title": "确认执行-抖音-3月", "header_row": 1},
     {"sheet_id": "7sKHAw", "title": "确认执行-抖音-4月", "header_row": 2},
     {"sheet_id": "a12h5b", "title": "确认执行-抖音-5月", "header_row": 2},
+    {"sheet_id": "Qd1wQU", "title": "确认执行-抖音-6月", "header_row": 2},
 ]
 
+# 任务1字段映射: 目标列名 -> 源列名
 TASK1_MAPPING = {
     "KOL/KOC名称": "KOL名称",
     "主页链接": "主页链接",
@@ -36,15 +67,57 @@ TASK1_MAPPING = {
     "合作形式": "合作形式",
 }
 
+# 任务2字段映射: 目标列名 -> 源列名（支持多个候选）
 TASK2_MAPPING = {
-    "博主": "KOL/KOC名称",
-    "燃气类型": "气源",
-    "地址/收件人/联系电话": "产品邮寄地址",
-    "是否已发布": "审核进度",
-    "发布时间": "发布时间",
+    "博主": ["KOL/KOC名称"],
+    "燃气类型": ["气源"],
+    "地址/收件人/联系电话": ["产品邮寄地址"],
+    "是否已发布": ["审核进度"],
+    "发布时间": ["发布时间"],
 }
 
+# ============================================================
+# API调用缓存
+# ============================================================
+_sheet_info_cache = None
+_header_mapping_cache = {}
 
+
+def clear_cache():
+    """清除所有缓存"""
+    global _sheet_info_cache, _header_mapping_cache
+    _sheet_info_cache = None
+    _header_mapping_cache = {}
+    logger.debug("缓存已清除")
+
+
+def get_sheet_info():
+    """获取表格信息（带缓存）"""
+    global _sheet_info_cache
+    if _sheet_info_cache is not None:
+        return _sheet_info_cache
+    
+    cmd = f'lark-cli sheets +info --spreadsheet-token {SPREADSHEET_TOKEN}'
+    result = run_lark_cli(cmd)
+    if result:
+        _sheet_info_cache = result
+    return _sheet_info_cache
+
+
+def get_header_mapping_cached(sheet_id, header_row=1):
+    """读取表头，返回列名到索引的映射（带缓存）"""
+    cache_key = f"{sheet_id}_{header_row}"
+    if cache_key in _header_mapping_cache:
+        return _header_mapping_cache[cache_key]
+    
+    mapping = get_header_mapping(SPREADSHEET_TOKEN, sheet_id, header_row)
+    _header_mapping_cache[cache_key] = mapping
+    return mapping
+
+
+# ============================================================
+# 工具函数
+# ============================================================
 def _configure_console_encoding():
     try:
         if hasattr(sys.stdout, "reconfigure"):
@@ -106,16 +179,22 @@ def _resolve_lark_cli_exe():
 
 
 def run_lark_cli(cmd):
+    """执行lark-cli命令"""
+    logger.debug(f"执行命令: {cmd}")
     result = subprocess.run(cmd, shell=True, capture_output=True, encoding="utf-8")
     if result.returncode != 0:
+        logger.error(f"命令执行失败: {cmd}")
+        logger.error(f"错误: {result.stderr}")
         return None
     try:
         return json.loads(result.stdout)
-    except Exception:
+    except Exception as e:
+        logger.error(f"解析JSON失败: {e}")
         return None
 
 
 def native_sheets_write(token, sheet_id, range_str, values_2d):
+    """使用原生API写入数据"""
     full_range = f"{sheet_id}!{range_str}" if "!" not in range_str else range_str
     payload = {
         "valueRange": {
@@ -136,15 +215,18 @@ def native_sheets_write(token, sheet_id, range_str, values_2d):
             timeout=30,
         )
         if r.returncode != 0:
+            logger.error(f"写入失败: {r.stderr}")
             return False
         out = (r.stdout or "").strip()
         resp = json.loads(out) if out else {}
         return resp.get("code") == 0 or resp.get("ok") is True
-    except Exception:
+    except Exception as e:
+        logger.error(f"写入异常: {e}")
         return False
 
 
 def native_sheets_style(token, sheet_id, range_str, style_obj):
+    """设置单元格样式"""
     path = f"/open-apis/sheets/v2/spreadsheets/{token}/style"
     payload = {
         "appendStyle": {
@@ -169,27 +251,45 @@ def native_sheets_style(token, sheet_id, range_str, style_obj):
 
 
 def normalize_date_str(raw_val):
-    text = normalize_text(raw_val)
-    if not text:
+    """
+    标准化日期字符串。
+    
+    处理飞书 API 返回的各种数据格式：
+    - 字符串：直接返回（保留原始格式如 "4.30"）
+    - 数字：转换为字符串
+    - 字典：提取 text 字段
+    - 列表：提取所有 text 字段拼接
+    """
+    if raw_val is None or raw_val == "":
         return ""
-    try:
-        f_val = float(raw_val)
-        if 1 <= f_val <= 12.31:
-            month = int(f_val)
-            day_raw = round((f_val - month) * 100)
-            if 1 <= day_raw <= 31:
-                return f"{month}.{day_raw:02d}"
-    except (ValueError, TypeError):
-        pass
-    m = re.match(r'^(\d{1,2})[.\-/](\d{1,2})$', text.strip())
-    if m:
-        month, day = int(m.group(1)), int(m.group(2))
-        if 1 <= month <= 12 and 1 <= day <= 31:
-            return f"{month}.{day:02d}"
-    return text
+    if isinstance(raw_val, str):
+        return raw_val
+    if isinstance(raw_val, dict):
+        text = raw_val.get("text", "")
+        if text:
+            return str(text)
+        return str(raw_val)
+    if isinstance(raw_val, list):
+        parts = []
+        for item in raw_val:
+            if isinstance(item, dict) and "text" in item:
+                parts.append(item["text"])
+            elif isinstance(item, str):
+                parts.append(item)
+        if parts:
+            return " ".join(parts)
+        return str(raw_val)
+    if isinstance(raw_val, float):
+        if raw_val == int(raw_val):
+            return str(int(raw_val))
+        return str(raw_val)
+    if isinstance(raw_val, int):
+        return str(raw_val)
+    return normalize_text(str(raw_val))
 
 
 def parse_sheet_date(val):
+    """解析日期"""
     if val is None or val == "" or val == "未知":
         return None
     try:
@@ -211,6 +311,7 @@ def parse_sheet_date(val):
 
 
 def index_to_col(n):
+    """索引转列名"""
     result = ""
     n += 1
     while n > 0:
@@ -220,6 +321,7 @@ def index_to_col(n):
 
 
 def get_header_mapping(token, sheet_id, header_row):
+    """读取表头映射"""
     range_str = f"{sheet_id}!A{header_row}:BZ{header_row}"
     cmd = (
         f'lark-cli sheets +read --spreadsheet-token {token} '
@@ -241,6 +343,7 @@ def get_header_mapping(token, sheet_id, header_row):
 
 
 def read_sheet_data(token, sheet_id, start_row, row_count=500):
+    """读取sheet数据"""
     range_str = f"{sheet_id}!A{start_row}:BZ{start_row + row_count}"
     cmd = (
         f'lark-cli sheets +read --spreadsheet-token {token} '
@@ -253,11 +356,11 @@ def read_sheet_data(token, sheet_id, start_row, row_count=500):
 
 
 def get_sheet_row_count(token, sheet_id):
-    cmd = f'lark-cli sheets +info --spreadsheet-token {token}'
-    result = run_lark_cli(cmd)
-    if not result:
+    """获取sheet行数"""
+    info = get_sheet_info()
+    if not info:
         return 1
-    sheets = result.get("data", {}).get("sheets", {}).get("sheets", [])
+    sheets = info.get("data", {}).get("sheets", {}).get("sheets", [])
     for sheet in sheets:
         if sheet.get("sheet_id") == sheet_id:
             return sheet.get("grid_properties", {}).get("row_count", 1)
@@ -265,6 +368,7 @@ def get_sheet_row_count(token, sheet_id):
 
 
 def extract_cell_value(row_data, col_idx):
+    """提取单元格值"""
     if col_idx is None or col_idx >= len(row_data):
         return ""
     val = row_data[col_idx]
@@ -275,20 +379,52 @@ def extract_cell_value(row_data, col_idx):
     return str(val)
 
 
+# ============================================================
+# 配置文件支持
+# ============================================================
+def load_config_from_file(config_path):
+    """从配置文件加载参数"""
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        logger.info(f"从配置文件加载参数: {config_path}")
+        return config
+    except Exception as e:
+        logger.error(f"加载配置文件失败: {e}")
+        return None
+
+
+def save_config_to_file(config_path, config):
+    """保存配置到文件"""
+    try:
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        logger.info(f"配置已保存到: {config_path}")
+        return True
+    except Exception as e:
+        logger.error(f"保存配置文件失败: {e}")
+        return False
+
+
+# ============================================================
+# 通用同步函数
+# ============================================================
 def sync_source_to_target(source_name, target_name, col_mapping, allow_append=False):
     """
-    任务1: 从抖音提报-KOL同步到确认执行-抖音-3月/4月/5月
+    从源表同步数据到目标表（通用函数）
     
     数据保护：如果目标单元格已有数据，不覆盖
+    逐列写入：避免覆盖中间列数据
     """
     source_cfg = SHEETS[source_name]
     target_cfg = SHEETS[target_name]
     
+    logger.info(f"同步: {source_name} -> {target_name}")
     print(f"\n{'='*50}")
     print(f"同步: {source_name} -> {target_name}")
     
-    source_col_map = get_header_mapping(SPREADSHEET_TOKEN, source_cfg["sheet_id"], source_cfg["header_row"])
-    target_col_map = get_header_mapping(SPREADSHEET_TOKEN, target_cfg["sheet_id"], target_cfg["header_row"])
+    source_col_map = get_header_mapping_cached(source_cfg["sheet_id"], source_cfg["header_row"])
+    target_col_map = get_header_mapping_cached(target_cfg["sheet_id"], target_cfg["header_row"])
 
     source_col_indices = {k: source_col_map.get(v) for k, v in col_mapping.items()}
     target_col_indices = {k: target_col_map.get(k) for k in col_mapping}
@@ -298,6 +434,7 @@ def sync_source_to_target(source_name, target_name, col_mapping, allow_append=Fa
     match_key_source_idx = source_col_indices.get(match_key_target_col)
 
     if match_key_target_idx is None or match_key_source_idx is None:
+        logger.error(f"未找到匹配键列 '{match_key_target_col}'")
         print(f"  错误: 未找到匹配键列 '{match_key_target_col}'")
         return
 
@@ -310,6 +447,7 @@ def sync_source_to_target(source_name, target_name, col_mapping, allow_append=Fa
         row_data = {k: clean_for_write(extract_cell_value(row, v)) for k, v in source_col_indices.items() if v is not None}
         source_data.append((key_val, row_data))
 
+    logger.info(f"  源表读取到 {len(source_data)} 行")
     print(f"  源表读取到 {len(source_data)} 行")
 
     target_row_count = get_sheet_row_count(SPREADSHEET_TOKEN, target_cfg["sheet_id"])
@@ -318,6 +456,7 @@ def sync_source_to_target(source_name, target_name, col_mapping, allow_append=Fa
     
     all_target_cols = [v for v in target_col_indices.values() if v is not None]
     if not all_target_cols:
+        logger.error("没有可读取的目标列")
         print(f"  错误: 没有可读取的目标列")
         return
     
@@ -339,6 +478,7 @@ def sync_source_to_target(source_name, target_name, col_mapping, allow_append=Fa
                 existing_rows[nick_norm] = (row_num, row)
                 last_data_row = row_num
 
+    logger.info(f"  目标表已有 {len(existing_rows)} 行数据")
     print(f"  目标表已有 {len(existing_rows)} 行数据")
 
     to_update = []
@@ -363,27 +503,18 @@ def sync_source_to_target(source_name, target_name, col_mapping, allow_append=Fa
         if changes:
             to_update.append((row_num, changes))
 
+    logger.info(f"  需要更新 {len(to_update)} 行")
     print(f"  需要更新 {len(to_update)} 行")
 
     updated_count = 0
     for row_num, changes in to_update:
-        change_indices = [v[0] for v in changes.values()]
-        r_min, r_max = min(change_indices), max(change_indices)
-        
-        _, orig_row_values = existing_rows[next(k for k, v in existing_rows.items() if v[0] == row_num)]
-        row_vals = []
-        for c_idx in range(r_min, r_max + 1):
-            col_name = next((n for n, i in target_col_indices.items() if i == c_idx), None)
-            if col_name in changes:
-                row_vals.append(changes[col_name][1])
-            else:
-                row_vals.append(orig_row_values[c_idx - min_col] if len(orig_row_values) > (c_idx - min_col) else "")
-        
-        range_str = f"{index_to_col(r_min)}{row_num}:{index_to_col(r_max)}{row_num}"
-        if native_sheets_write(SPREADSHEET_TOKEN, target_cfg["sheet_id"], range_str, [row_vals]):
-            updated_count += 1
+        for col_name, (col_idx, new_val) in changes.items():
+            range_str = f"{index_to_col(col_idx)}{row_num}:{index_to_col(col_idx)}{row_num}"
+            if native_sheets_write(SPREADSHEET_TOKEN, target_cfg["sheet_id"], range_str, [[new_val]]):
+                updated_count += 1
 
-    print(f"  已更新 {updated_count} 行")
+    logger.info(f"  已更新 {updated_count} 个单元格")
+    print(f"  已更新 {updated_count} 个单元格")
     
     source_nicknames = set(key_val for key_val, _ in source_data)
     missing_in_source = []
@@ -392,6 +523,7 @@ def sync_source_to_target(source_name, target_name, col_mapping, allow_append=Fa
             missing_in_source.append(nick_norm)
     
     if missing_in_source:
+        logger.warning(f"  {len(missing_in_source)} 个博主在源表中不存在")
         print(f"\n  ⚠ 以下 {len(missing_in_source)} 个博主在源表中不存在，无法同步:")
         for nick in sorted(missing_in_source):
             print(f"    - {nick}")
@@ -405,19 +537,22 @@ def sync_to_machine_flow():
     1. 达人量级包含"KOL"
     2. 产品邮寄地址不包含"抠图"或"扣图"
     3. 产品邮寄地址不是"自有"
+    
+    逐列写入：避免覆盖中间列数据
     """
+    logger.info("同步: 确认执行表 -> 机器流转统计3-4月")
     print(f"\n{'='*50}")
     print(f"同步: 确认执行表 -> 机器流转统计3-4月")
     
     target_cfg = SHEETS["机器流转统计3-4月"]
-    target_col_map = get_header_mapping(SPREADSHEET_TOKEN, target_cfg["sheet_id"], target_cfg["header_row"])
+    target_col_map = get_header_mapping_cached(target_cfg["sheet_id"], target_cfg["header_row"])
     
     target_indices = {k: target_col_map.get(k) for k in ["博主", "燃气类型", "地址/收件人/联系电话", "是否已发布", "发布时间"]}
 
     all_source_data = {}
     for src_cfg in TASK2_SOURCES:
         sid, s_title, h_row = src_cfg["sheet_id"], src_cfg["title"], src_cfg["header_row"]
-        s_map = get_header_mapping(SPREADSHEET_TOKEN, sid, h_row)
+        s_map = get_header_mapping_cached(sid, h_row)
         
         s_indices = {}
         for tk, sv_list in TASK2_MAPPING.items():
@@ -463,6 +598,7 @@ def sync_to_machine_flow():
             
             all_source_data[name] = data
 
+    logger.info(f"  源表收集到 {len(all_source_data)} 个博主")
     print(f"  源表收集到 {len(all_source_data)} 个博主")
 
     min_col = min(i for i in target_indices.values() if i is not None)
@@ -487,6 +623,7 @@ def sync_to_machine_flow():
                 existing[name] = (rn, row)
                 last_row = rn
 
+    logger.info(f"  目标表已有 {len(existing)} 行数据")
     print(f"  目标表已有 {len(existing)} 行数据")
 
     to_update = []
@@ -510,24 +647,22 @@ def sync_to_machine_flow():
                 elif cv != nv and nv:
                     changes[tk] = nv
             if changes:
-                to_update.append((rn, changes))
+                to_update.append((rn, changes, sd))
         else:
             to_append.append(sd)
 
+    logger.info(f"  更新 {len(to_update)} 行，追加 {len(to_append)} 行")
     print(f"  更新 {len(to_update)} 行，追加 {len(to_append)} 行")
 
-    for rn, chgs in to_update:
-        _, orig_row_vals = existing[next(k for k, v in existing.items() if v[0] == rn)]
-        row_vals = []
-        for c_idx in range(min_col, max_col + 1):
-            col_name = next((k for k, v in target_indices.items() if v == c_idx), None)
-            if col_name in chgs:
-                row_vals.append(chgs[col_name])
-            else:
-                row_vals.append(orig_row_vals[c_idx - min_col] if len(orig_row_vals) > (c_idx - min_col) else "")
-        
-        range_str = f"{index_to_col(min_col)}{rn}:{index_to_col(max_col)}{rn}"
-        native_sheets_write(SPREADSHEET_TOKEN, target_cfg["sheet_id"], range_str, [row_vals])
+    updated_count = 0
+    for rn, chgs, _ in to_update:
+        for col_name, new_val in chgs.items():
+            col_idx = target_indices.get(col_name)
+            if col_idx is None:
+                continue
+            range_str = f"{index_to_col(col_idx)}{rn}:{index_to_col(col_idx)}{rn}"
+            if native_sheets_write(SPREADSHEET_TOKEN, target_cfg["sheet_id"], range_str, [[new_val]]):
+                updated_count += 1
     
     if to_append:
         batch = []
@@ -547,18 +682,59 @@ def sync_to_machine_flow():
                 b
             )
 
-    print(f"  同步完成: 更新 {len(to_update)}, 追加 {len(to_append)}")
+    logger.info(f"  同步完成: 更新 {updated_count} 个单元格，追加 {len(to_append)} 行")
+    print(f"  同步完成: 更新 {updated_count} 个单元格，追加 {len(to_append)} 行")
 
 
+# ============================================================
+# 主函数
+# ============================================================
 def main():
+    global SPREADSHEET_TOKEN
     _configure_console_encoding()
+    
+    config_file = None
+    token_override = None
+    
+    args = sys.argv[1:]
+    filtered_args = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--config" and i + 1 < len(args):
+            config_file = args[i + 1]
+            i += 2
+        elif arg == "--token" and i + 1 < len(args):
+            token_override = args[i + 1]
+            i += 2
+        else:
+            filtered_args.append(arg)
+            i += 1
+    
+    if token_override:
+        SPREADSHEET_TOKEN = token_override
+        logger.info(f"使用自定义 SPREADSHEET_TOKEN: {token_override}")
     
     run_task1 = True
     run_task2 = True
     
-    if len(sys.argv) > 1:
-        run_task1 = "1" in sys.argv[1]
-        run_task2 = "2" in sys.argv[1]
+    if config_file:
+        config = load_config_from_file(config_file)
+        if config:
+            tasks = config.get("tasks", [1, 1])
+            run_task1 = bool(tasks[0]) if len(tasks) > 0 else True
+            run_task2 = bool(tasks[1]) if len(tasks) > 1 else True
+        else:
+            sys.exit(1)
+    elif filtered_args:
+        run_task1 = "1" in filtered_args[0]
+        run_task2 = "2" in filtered_args[0]
+    
+    logger.info("="*60)
+    logger.info("任务执行计划:")
+    logger.info(f"  任务1 (抖音提报-KOL -> 确认执行表): {'是' if run_task1 else '否'}")
+    logger.info(f"  任务2 (确认执行表 -> 机器流转统计): {'是' if run_task2 else '否'}")
+    logger.info("="*60)
     
     print("="*60)
     print("任务执行计划:")
@@ -568,18 +744,20 @@ def main():
     
     if run_task1:
         print("\n" + "="*60)
-        print("执行任务1: 更新确认执行表")
+        print("执行任务1: 抖音提报-KOL -> 确认执行表")
         print("="*60)
-        sync_source_to_target("抖音提报-KOL", "确认执行-抖音-3月", TASK1_MAPPING)
-        sync_source_to_target("抖音提报-KOL", "确认执行-抖音-4月", TASK1_MAPPING)
-        sync_source_to_target("抖音提报-KOL", "确认执行-抖音-5月", TASK1_MAPPING)
-
+        logger.info("执行任务1: 抖音提报-KOL -> 确认执行表")
+        
+        for target_name in ["确认执行-抖音-3月", "确认执行-抖音-4月", "确认执行-抖音-5月", "确认执行-抖音-6月"]:
+            sync_source_to_target("抖音提报-KOL", target_name, TASK1_MAPPING)
+    
     if run_task2:
         print("\n" + "="*60)
-        print("执行任务2: 更新机器流转统计")
+        print("执行任务2: 确认执行表 -> 机器流转统计3-4月")
         print("="*60)
+        logger.info("执行任务2: 确认执行表 -> 机器流转统计3-4月")
         sync_to_machine_flow()
-
+    
     print("\n" + "="*60)
     print("所有任务执行完成!")
     print("="*60)
@@ -587,8 +765,12 @@ def main():
     print("\n" + "="*60)
     print("执行汇总")
     print("="*60)
-    print(f"任务1 (更新确认执行表): {'已执行' if run_task1 else '未执行'}")
-    print(f"任务2 (更新机器流转统计): {'已执行' if run_task2 else '未执行'}")
+    print(f"任务1 (抖音提报-KOL -> 确认执行表): {'已执行' if run_task1 else '未执行'}")
+    print(f"任务2 (确认执行表 -> 机器流转统计): {'已执行' if run_task2 else '未执行'}")
+    
+    logger.info("所有任务执行完成")
+    logger.info(f"任务1: {'已执行' if run_task1 else '未执行'}")
+    logger.info(f"任务2: {'已执行' if run_task2 else '未执行'}")
 
 
 if __name__ == "__main__":

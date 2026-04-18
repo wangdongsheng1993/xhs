@@ -32,13 +32,14 @@ class SyncKolApp:
     def __init__(self, root):
         self.root = root
         self.root.title("抖音KOL执行表同步工具")
-        self.root.geometry("800x520")
-        self.root.minsize(700, 450)
+        self.root.geometry("800x580")
+        self.root.minsize(700, 500)
 
         self.process = None
         self.worker_thread = None
         self.log_queue = queue.Queue()
 
+        self.token_var = tk.StringVar(value="")
         self.task1_var = tk.BooleanVar(value=True)
         self.task2_var = tk.BooleanVar(value=True)
 
@@ -48,7 +49,7 @@ class SyncKolApp:
 
     def _build_ui(self):
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(2, weight=1)
+        self.root.rowconfigure(4, weight=1)
 
         top = ttk.Frame(self.root, padding=16)
         top.grid(row=0, column=0, sticky="nsew")
@@ -63,8 +64,24 @@ class SyncKolApp:
         )
         desc.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 14))
 
+        token_frame = ttk.LabelFrame(self.root, text="文档Token设置（可选）", padding=16)
+        token_frame.grid(row=1, column=0, sticky="ew", padx=16)
+        token_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(token_frame, text="SPREADSHEET_TOKEN:", font=("Microsoft YaHei UI", 10)).grid(
+            row=0, column=0, sticky="w", pady=4
+        )
+        ttk.Entry(token_frame, textvariable=self.token_var, width=50).grid(
+            row=0, column=1, sticky="ew", padx=(8, 0)
+        )
+        ttk.Label(
+            token_frame,
+            text="提示：留空则使用脚本中的默认值",
+            foreground="gray",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
         task_frame = ttk.LabelFrame(self.root, text="同步任务选择", padding=16)
-        task_frame.grid(row=1, column=0, sticky="ew", padx=16)
+        task_frame.grid(row=2, column=0, sticky="ew", padx=16)
 
         ttk.Checkbutton(
             task_frame,
@@ -79,7 +96,7 @@ class SyncKolApp:
         ).grid(row=1, column=0, sticky="w", pady=4)
 
         mapping_frame = ttk.LabelFrame(self.root, text="列映射说明", padding=12)
-        mapping_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 0))
+        mapping_frame.grid(row=3, column=0, sticky="ew", padx=16, pady=(8, 0))
 
         mapping_text = (
             "任务1: KOL名称→KOL/KOC名称, 主页链接→主页链接, ID→ID, 合作形式→合作形式\n"
@@ -90,7 +107,7 @@ class SyncKolApp:
         )
 
         action_bar = ttk.Frame(self.root, padding=(16, 12))
-        action_bar.grid(row=3, column=0, sticky="ew")
+        action_bar.grid(row=4, column=0, sticky="ew")
         action_bar.columnconfigure(1, weight=1)
 
         self.run_button = ttk.Button(action_bar, text="开始同步", command=self._start_run)
@@ -101,7 +118,7 @@ class SyncKolApp:
         )
 
         log_frame = ttk.LabelFrame(self.root, text="运行日志", padding=16)
-        log_frame.grid(row=4, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        log_frame.grid(row=5, column=0, sticky="nsew", padx=16, pady=(0, 16))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
@@ -141,7 +158,13 @@ class SyncKolApp:
             return
 
         python_exec = resolve_cli_python()
-        command = [python_exec, "-u", SCRIPT_PATH, tasks]
+        command = [python_exec, "-u", SCRIPT_PATH]
+        
+        token_value = self.token_var.get().strip()
+        if token_value:
+            command.extend(["--token", token_value])
+        
+        command.append(tasks)
 
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")

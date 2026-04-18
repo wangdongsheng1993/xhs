@@ -14,7 +14,8 @@ import sys
 from datetime import datetime, timedelta
 
 # 配置
-SPREADSHEET_TOKEN = "EEzYwZNowie2ALkTeOecNQSTnAf"
+DEFAULT_SPREADSHEET_TOKEN = "IxmRw6cPMi7exjkyHCNciObInmc"
+SPREADSHEET_TOKEN = DEFAULT_SPREADSHEET_TOKEN
 
 # 日志配置
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sync_machine_plan.log")
@@ -79,29 +80,40 @@ def normalize_text(value):
 def format_publish_time_cell(value):
     """
     将「发布时间」列单元格值规范为展示用字符串。
-
-    飞书/表格 API 对形如 4.10 的日期常按数字存储，读出来会变成 float 4.1，写入目标表后显示成 4.1。
-    业务上多用「月 + 日/100」录入（如 4 月 10 日 -> 4.10 -> 存成 4.1），此处按该规则还原为 M.DD（如 4.10）。
-    对明显为 Excel/表格序列日的较大数值（>20000）不做该解码，原样转字符串。
+    
+    处理飞书 API 返回的各种数据格式：
+    - 字符串：直接返回（保留原始格式如 "4.30"）
+    - 数字：转换为字符串
+    - 字典：提取 text 字段
+    - 列表：提取所有 text 字段拼接
     """
     if value is None or value == "":
         return ""
     if isinstance(value, bool):
         return normalize_text(str(value))
-    if isinstance(value, (int, float)):
-        x = float(value)
-        if x > 20000:
-            return normalize_text(str(value))
-        month = int(x)
-        if month < 1 or month > 12:
-            return normalize_text(str(value))
-        frac = x - month
-        if abs(frac) < 1e-9:
-            return str(month)
-        day = int(round(frac * 100 + 1e-6))
-        if day < 1 or day > 31:
-            return normalize_text(str(value))
-        return f"{month}.{day:02d}"
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        text = value.get("text", "")
+        if text:
+            return str(text)
+        return str(value)
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, dict) and "text" in item:
+                parts.append(item["text"])
+            elif isinstance(item, str):
+                parts.append(item)
+        if parts:
+            return " ".join(parts)
+        return str(value)
+    if isinstance(value, float):
+        if value == int(value):
+            return str(int(value))
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
     return normalize_text(str(value))
 
 
@@ -1140,16 +1152,30 @@ def save_config_to_file(config_path, config):
 
 def main():
     import sys
+    global SPREADSHEET_TOKEN
     _configure_console_encoding()
 
     config_file = None
-    config_file_arg_idx = None
+    token_override = None
     
-    for i, arg in enumerate(sys.argv):
-        if arg == "--config" and i + 1 < len(sys.argv):
-            config_file = sys.argv[i + 1]
-            config_file_arg_idx = i
-            break
+    args = sys.argv[1:]
+    filtered_args = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--config" and i + 1 < len(args):
+            config_file = args[i + 1]
+            i += 2
+        elif arg == "--token" and i + 1 < len(args):
+            token_override = args[i + 1]
+            i += 2
+        else:
+            filtered_args.append(arg)
+            i += 1
+    
+    if token_override:
+        SPREADSHEET_TOKEN = token_override
+        logger.info(f"使用自定义 SPREADSHEET_TOKEN: {token_override}")
     
     if config_file:
         config = load_config_from_file(config_file)
@@ -1164,12 +1190,14 @@ def main():
             task1, task2, task3, task4 = tasks[0], tasks[1], tasks[2], tasks[3]
         else:
             sys.exit(1)
-    elif len(sys.argv) < 9:
+    elif len(filtered_args) < 8:
         print("用法: python sync_machine_plan.py <小红书3月起始行> <小红书4月起始行> <小红书5月起始行> <小红书6月起始行> <抖音3月起始行> <抖音4月起始行> <抖音5月起始行> <抖音6月起始行> [任务1:0或1] [任务2:0或1] [任务3:0或1] [任务4:0或1]")
         print("   或: python sync_machine_plan.py --config <配置文件.json>")
+        print("   或: python sync_machine_plan.py --token <文档token> ...")
         print("")
         print("示例: python sync_machine_plan.py 3 5 4 2 2 8 6 3 1 1 1 1")
         print("示例: python sync_machine_plan.py --config sync_config.json")
+        print("示例: python sync_machine_plan.py --token IxmRw6cPMi7exjkyHCNciObInmc 3 5 4 2 2 8 6 3 1 1 1 1")
         print("")
         print("配置文件格式 (sync_config.json):")
         print('{')
@@ -1193,19 +1221,19 @@ def main():
         print("  任务4: 更新抖音机器流转sheet (确认执行表→机器流转规划)")
         sys.exit(1)
     else:
-        SOURCE_SHEETS["小红书确认执行3月"]["start_row"] = int(sys.argv[1])
-        SOURCE_SHEETS["小红书确认执行4月"]["start_row"] = int(sys.argv[2])
-        SOURCE_SHEETS["小红书确认执行5月"]["start_row"] = int(sys.argv[3])
-        SOURCE_SHEETS["小红书确认执行6月"]["start_row"] = int(sys.argv[4])
-        SOURCE_SHEETS["3月抖音确认执行"]["start_row"] = int(sys.argv[5])
-        SOURCE_SHEETS["4月抖音确认执行"]["start_row"] = int(sys.argv[6])
-        SOURCE_SHEETS["5月抖音确认执行"]["start_row"] = int(sys.argv[7])
-        SOURCE_SHEETS["6月抖音确认执行"]["start_row"] = int(sys.argv[8])
+        SOURCE_SHEETS["小红书确认执行3月"]["start_row"] = int(filtered_args[0])
+        SOURCE_SHEETS["小红书确认执行4月"]["start_row"] = int(filtered_args[1])
+        SOURCE_SHEETS["小红书确认执行5月"]["start_row"] = int(filtered_args[2])
+        SOURCE_SHEETS["小红书确认执行6月"]["start_row"] = int(filtered_args[3])
+        SOURCE_SHEETS["3月抖音确认执行"]["start_row"] = int(filtered_args[4])
+        SOURCE_SHEETS["4月抖音确认执行"]["start_row"] = int(filtered_args[5])
+        SOURCE_SHEETS["5月抖音确认执行"]["start_row"] = int(filtered_args[6])
+        SOURCE_SHEETS["6月抖音确认执行"]["start_row"] = int(filtered_args[7])
 
-        task1 = int(sys.argv[9]) if len(sys.argv) > 9 else 1
-        task2 = int(sys.argv[10]) if len(sys.argv) > 10 else 1
-        task3 = int(sys.argv[11]) if len(sys.argv) > 11 else 1
-        task4 = int(sys.argv[12]) if len(sys.argv) > 12 else 1
+        task1 = int(filtered_args[8]) if len(filtered_args) > 8 else 1
+        task2 = int(filtered_args[9]) if len(filtered_args) > 9 else 1
+        task3 = int(filtered_args[10]) if len(filtered_args) > 10 else 1
+        task4 = int(filtered_args[11]) if len(filtered_args) > 11 else 1
 
     logger.info("="*60)
     logger.info("任务执行计划:")
