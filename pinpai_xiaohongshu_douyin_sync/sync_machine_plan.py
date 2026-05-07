@@ -310,6 +310,18 @@ ERHE_TO_CONFIRM_MAPPING_DOUYIN = {
     "平台价（平台裸价）": "平台价格"
 }
 
+# 需要特殊处理的列（值转换映射）
+# 格式: 目标列名 -> {"source_col": 源列名, "map": {源值: 目标值}}
+# 当源值为"否"/"/"/空时，目标统一写"否"
+SPECIAL_COL_MAPPING = {
+    "是否分发其他平台&发布链接": {
+        "source_col": "是否分发其他平台",
+        "否": "否",
+        "/": "否",
+        "": "否"
+    }
+}
+
 # 二核表到确认执行表的同步映射
 # 格式: 二核表名称 -> {"targets": [确认执行表名称列表], "mapping": 字段映射}
 ERHE_SYNC_CONFIG = {
@@ -939,7 +951,9 @@ def sync_erhe_to_confirm(source_name, target_name, col_mapping):
         return
     
     rows = read_sheet_data(source_cfg["sheet_id"], source_cfg["header_row"] + 1)
-    
+
+    special_source_col = source_col_map.get("是否分发其他平台")
+
     source_data = []
     for row in rows:
         key_val = normalize_text(row[match_key_source_idx] if match_key_source_idx < len(row) else "")
@@ -951,6 +965,9 @@ def sync_erhe_to_confirm(source_name, target_name, col_mapping):
                 continue
             val = normalize_text(row[src_col_idx] if src_col_idx < len(row) else "")
             row_data[col_name] = val
+        if special_source_col is not None:
+            special_val = normalize_text(row[special_source_col] if special_source_col < len(row) else "")
+            row_data["是否分发其他平台"] = special_val
         source_data.append((key_val, row_data))
     
     print(f"  源表读取到 {len(source_data)} 行")
@@ -961,6 +978,11 @@ def sync_erhe_to_confirm(source_name, target_name, col_mapping):
     
     all_target_cols = [v for v in target_col_indices.values() if v is not None]
     all_target_cols.append(match_key_target_idx)
+
+    special_tgt_col_idx = target_col_map.get("是否分发其他平台&发布链接")
+    if special_tgt_col_idx is not None:
+        all_target_cols.append(special_tgt_col_idx)
+
     if not all_target_cols:
         print(f"  错误: 没有可读取的目标列")
         return
@@ -1038,8 +1060,68 @@ def sync_erhe_to_confirm(source_name, target_name, col_mapping):
         print(f"\n  ⚠ 以下 {len(missing_in_source)} 个博主在二核表中不存在，无法同步:")
         for nick in sorted(missing_in_source):
             print(f"    - {nick}")
-    
+
+    update_special_columns(source_cfg, target_cfg, source_col_map, target_col_map, existing_rows, source_data, min_col)
     update_koc_kol_koutu_status_in_confirm(target_cfg, target_col_map, existing_rows, min_col)
+
+
+def update_special_columns(source_cfg, target_cfg, source_col_map, target_col_map, existing_rows, source_data, min_col):
+    """
+    更新特殊列：是否分发其他平台&发布链接
+
+    规则：
+    - 从二核表读取"是否分发其他平台"列
+    - 如果值为"否"或"/"或空，目标列更新为"否"
+    - 如果值为其他内容，直接复制到目标列
+    - 数据保护：目标已有数据（且非脏链接）时不覆盖
+    """
+    target_col_name = "是否分发其他平台&发布链接"
+    source_col_name = "是否分发其他平台"
+
+    tgt_idx = target_col_map.get(target_col_name)
+    src_idx = source_col_map.get(source_col_name)
+
+    if tgt_idx is None:
+        print(f"    目标表未找到'{target_col_name}'列，跳过特殊列更新")
+        return
+    if src_idx is None:
+        print(f"    源表未找到'{source_col_name}'列，跳过特殊列更新")
+        return
+
+    print(f"\n  处理特殊列: {source_col_name} -> {target_col_name}")
+
+    special_source = {}
+    for key_val, row_data in source_data:
+        source_val = normalize_text(row_data.get(source_col_name, ""))
+        special_source[key_val] = source_val
+
+    special_updates = 0
+    for key_val, (row_num, orig_row) in existing_rows.items():
+        if key_val not in special_source:
+            continue
+
+        source_val = special_source[key_val]
+        cur_val = normalize_text(orig_row[tgt_idx - min_col] if len(orig_row) > (tgt_idx - min_col) else "")
+
+        is_dirty_link = cur_val.startswith("[{'") and "'cellPosition'" in cur_val
+        if cur_val and not is_dirty_link:
+            continue
+
+        if source_val in ("否", "/", ""):
+            new_val = "否"
+        else:
+            new_val = source_val
+
+        if cur_val != new_val:
+            col_letter = index_to_col(tgt_idx)
+            range_str = f"{target_cfg['sheet_id']}!{col_letter}{row_num}:{col_letter}{row_num}"
+            result = lark_sheets_write(target_cfg["sheet_id"], range_str, [[new_val]])
+            if result.returncode == 0:
+                resp = json.loads(result.stdout.decode('utf-8', errors='replace'))
+                if resp.get("ok"):
+                    special_updates += 1
+
+    print(f"    特殊列更新 {special_updates} 个单元格")
 
 
 def update_koc_kol_koutu_status_in_confirm(target_cfg, target_col_map, existing_rows, min_col):

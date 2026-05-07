@@ -5,6 +5,7 @@ import os
 import sys
 import statistics
 import shutil
+from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 from openpyxl import load_workbook
 from playwright.sync_api import sync_playwright
 
@@ -516,6 +517,59 @@ def get_notes_median_fallback(notes_data, top_n=4):
     return read_median, interact_median
 
 
+def is_xiaohongshu_host(parsed_url):
+    host = (parsed_url.hostname or "").lower()
+    return host == "xiaohongshu.com" or host.endswith(".xiaohongshu.com")
+
+
+def normalize_xhs_homepage_url(raw_url):
+    """把登录跳转、来源参数等还原成稳定的小红书主页地址。"""
+    url = str(raw_url or "").strip()
+    if not url or url == "about:blank":
+        return ""
+
+    if url.startswith("//"):
+        url = f"https:{url}"
+    elif url.startswith("/"):
+        url = f"https://www.xiaohongshu.com{url}"
+
+    for _ in range(3):
+        parsed = urlsplit(url)
+        if not (is_xiaohongshu_host(parsed) and parsed.path.rstrip("/") == "/login"):
+            break
+
+        redirect_values = parse_qs(parsed.query).get("redirectPath") or []
+        if not redirect_values:
+            break
+
+        redirected_url = unquote(redirect_values[0] or "").strip()
+        if not redirected_url or redirected_url == url:
+            break
+
+        if redirected_url.startswith("//"):
+            redirected_url = f"https:{redirected_url}"
+        elif redirected_url.startswith("/"):
+            redirected_url = f"https://www.xiaohongshu.com{redirected_url}"
+
+        url = redirected_url
+
+    parsed = urlsplit(url)
+    if is_xiaohongshu_host(parsed) and parsed.path.startswith("/user/profile/"):
+        profile_id = parsed.path.split("/user/profile/", 1)[1].split("/", 1)[0]
+        if profile_id:
+            return urlunsplit(
+                (
+                    "https",
+                    "www.xiaohongshu.com",
+                    f"/user/profile/{profile_id}",
+                    "",
+                    "",
+                )
+            )
+
+    return url
+
+
 def get_homepage_url_from_profile_click(context, page, red_id):
     """点击蒲公英页里的小红书号，读取新打开主页的真实地址。"""
     if not red_id:
@@ -546,7 +600,7 @@ def get_homepage_url_from_profile_click(context, page, red_id):
                     """
                 )
                 if href and href != "about:blank":
-                    return href
+                    return normalize_xhs_homepage_url(href) or href
             except Exception:
                 pass
 
@@ -564,7 +618,7 @@ def get_homepage_url_from_profile_click(context, page, red_id):
                 popup.wait_for_timeout(200)
             popup.close()
             if url and url != "about:blank":
-                return url
+                return normalize_xhs_homepage_url(url) or url
         except:
             try:
                 href = locator.first.evaluate(
@@ -576,7 +630,7 @@ def get_homepage_url_from_profile_click(context, page, red_id):
                     """
                 )
                 if href:
-                    return href
+                    return normalize_xhs_homepage_url(href) or href
             except:
                 pass
 

@@ -436,6 +436,7 @@ def sync_source_to_target(source_name, target_name, col_mapping, start_row=None,
         return
 
     # 读取源表数据
+    special_source_col = source_col_map.get("是否分发其他平台")
     rows = read_sheet_data(SPREADSHEET_TOKEN, source_cfg["sheet_id"], start_row if start_row else source_cfg["header_row"] + 1)
     source_data = []
     for row in rows:
@@ -443,6 +444,9 @@ def sync_source_to_target(source_name, target_name, col_mapping, start_row=None,
         if not key_val:
             continue
         row_data = {k: clean_for_write(extract_cell_value(row, v)) for k, v in source_col_indices.items() if v is not None}
+        if special_source_col is not None:
+            special_val = normalize_text(extract_cell_value(row, special_source_col))
+            row_data["是否分发其他平台"] = special_val
         source_data.append((key_val, row_data))
     
     logger.info(f"  源表读取到 {len(source_data)} 行")
@@ -453,6 +457,11 @@ def sync_source_to_target(source_name, target_name, col_mapping, start_row=None,
         target_row_count = target_cfg["header_row"] + 200
     
     all_target_cols = [v for v in target_col_indices.values() if v is not None]
+
+    special_tgt_col_idx = target_col_map.get("是否分发其他平台&发布链接")
+    if special_tgt_col_idx is not None:
+        all_target_cols.append(special_tgt_col_idx)
+
     min_col, max_col = min(all_target_cols), max(all_target_cols)
     range_str = f"{target_cfg['sheet_id']}!{index_to_col(min_col)}{target_cfg['header_row']}:{index_to_col(max_col)}{target_row_count}"
     result = run_lark_cli(f'lark-cli sheets +read --spreadsheet-token {SPREADSHEET_TOKEN} --sheet-id {target_cfg["sheet_id"]} --range "{range_str}"')
@@ -513,6 +522,58 @@ def sync_source_to_target(source_name, target_name, col_mapping, start_row=None,
             batch = values[i:i+50]
             native_sheets_write(SPREADSHEET_TOKEN, target_cfg['sheet_id'], f"{index_to_col(min_col)}{last_data_row+1+i}:{index_to_col(max_col)}{last_data_row+i+len(batch)}", batch)
         logger.info(f"  已追加 {len(to_append)} 行")
+
+    update_special_columns(source_cfg, target_cfg, source_col_map, target_col_map, existing_rows, source_data, min_col)
+
+
+def update_special_columns(source_cfg, target_cfg, source_col_map, target_col_map, existing_rows, source_data, min_col):
+    """
+    更新特殊列：是否分发其他平台&发布链接
+
+    规则：
+    - 从源表读取"是否分发其他平台"列
+    - 如果值为"否"或"/"或空，目标列更新为"否"
+    - 如果值为其他内容，直接复制到目标列
+    - 数据保护：目标已有数据（且非脏链接）时不覆盖
+    """
+    target_col_name = "是否分发其他平台&发布链接"
+    source_col_name = "是否分发其他平台"
+
+    tgt_idx = target_col_map.get(target_col_name)
+    if tgt_idx is None:
+        print(f"    目标表未找到'{target_col_name}'列，跳过特殊列更新")
+        return
+
+    print(f"\n  处理特殊列: {source_col_name} -> {target_col_name}")
+
+    special_source = {}
+    for key_val, row_data in source_data:
+        source_val = normalize_text(row_data.get(source_col_name, ""))
+        special_source[key_val] = source_val
+
+    special_updates = 0
+    for key_val, (row_num, orig_row) in existing_rows.items():
+        if key_val not in special_source:
+            continue
+
+        source_val = special_source[key_val]
+        cur_val = normalize_text(orig_row[tgt_idx - min_col]) if len(orig_row) > (tgt_idx - min_col) else ""
+
+        is_dirty_link = cur_val.startswith("[{'") and "'cellPosition'" in cur_val
+        if cur_val and not is_dirty_link:
+            continue
+
+        if source_val in ("否", "/", ""):
+            new_val = "否"
+        else:
+            new_val = source_val
+
+        if cur_val != new_val:
+            range_str = f"{index_to_col(tgt_idx)}{row_num}:{index_to_col(tgt_idx)}{row_num}"
+            if native_sheets_write(SPREADSHEET_TOKEN, target_cfg["sheet_id"], range_str, [[new_val]]):
+                special_updates += 1
+
+    print(f"    特殊列更新 {special_updates} 个单元格")
 
 
 def sync_to_machine_flow():
