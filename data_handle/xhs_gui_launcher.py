@@ -10,6 +10,18 @@ from tkinter.scrolledtext import ScrolledText
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RUNNER_PATH = os.path.join(BASE_DIR, "xhs_excel_runner.py")
+DOWNLOAD_SCRIPT_PATH = os.path.join(BASE_DIR, "download_feishu_excel.py")
+SETUP_LARK_CLI_PATH = os.path.join(BASE_DIR, "setup_lark_cli.py")
+UPLOAD_SCRIPT_PATH = os.path.join(BASE_DIR, "upload_excel_to_feishu.py")
+FEISHU_SOURCE = os.getenv(
+    "XHS_FEISHU_SOURCE",
+    "https://mv21kbvltn.feishu.cn/wiki/PzBaw9C66iZtRFkPvfbcVCDqnBb",
+).strip()
+FEISHU_UPLOAD_SOURCE = os.getenv(
+    "XHS_FEISHU_UPLOAD_SOURCE",
+    "https://mv21kbvltn.feishu.cn/wiki/PzBaw9C66iZtRFkPvfbcVCDqnBb",
+).strip()
+FEISHU_EXCEL_PATH = os.path.join(BASE_DIR, "【内部深演智能】老板电器C5 提号表.xlsx")
 
 MODE_OPTIONS = [
     ("品牌", "brand"),
@@ -81,6 +93,7 @@ class LauncherApp:
 
         self.process = None
         self.worker_thread = None
+        self.current_task = ""
         self.log_queue = queue.Queue()
         self.auto_output = True
 
@@ -151,13 +164,26 @@ class LauncherApp:
 
         action_bar = ttk.Frame(self.root, padding=(16, 12))
         action_bar.grid(row=2, column=0, sticky="ew")
-        action_bar.columnconfigure(1, weight=1)
+        action_bar.columnconfigure(4, weight=1)
 
         self.run_button = ttk.Button(action_bar, text="开始运行", command=self._start_run)
         self.run_button.grid(row=0, column=0, sticky="w")
 
+        self.auth_button = ttk.Button(
+            action_bar, text="飞书授权", command=self._start_lark_auth
+        )
+        self.auth_button.grid(row=0, column=1, sticky="w", padx=(12, 0))
+
+        self.download_button = ttk.Button(
+            action_bar, text="下载飞书 Excel", command=self._start_download
+        )
+        self.download_button.grid(row=0, column=2, sticky="w", padx=(12, 0))
+
+        self.upload_button = ttk.Button(action_bar, text="写回飞书", command=self._start_upload)
+        self.upload_button.grid(row=0, column=3, sticky="w", padx=(12, 0))
+
         ttk.Button(action_bar, text="打开所在文件夹", command=self._open_output_folder).grid(
-            row=0, column=2, sticky="e"
+            row=0, column=5, sticky="e"
         )
 
         log_frame = ttk.LabelFrame(self.root, text="运行日志", padding=16)
@@ -220,13 +246,26 @@ class LauncherApp:
     def _log(self, text):
         self.log_queue.put(("log", text))
 
-    def _set_running(self, is_running):
+    def _set_running(self, is_running, task="run"):
         state = "disabled" if is_running else "normal"
         self.run_button.configure(state=state)
+        self.download_button.configure(state=state)
+        self.auth_button.configure(state=state)
+        self.upload_button.configure(state=state)
         if is_running:
-            self.run_button.configure(text="运行中...")
+            if task == "download":
+                self.download_button.configure(text="下载中...")
+            elif task == "auth":
+                self.auth_button.configure(text="授权中...")
+            elif task == "upload":
+                self.upload_button.configure(text="写回中...")
+            else:
+                self.run_button.configure(text="运行中...")
         else:
             self.run_button.configure(text="开始运行")
+            self.auth_button.configure(text="飞书授权")
+            self.download_button.configure(text="下载飞书 Excel")
+            self.upload_button.configure(text="写回飞书")
 
     def _validate_form(self):
         input_path = self.input_path_var.get().strip()
@@ -262,6 +301,130 @@ class LauncherApp:
             command.append("--verbose")
         return command
 
+    def _build_download_command(self):
+        return [
+            resolve_cli_python(),
+            "-u",
+            DOWNLOAD_SCRIPT_PATH,
+            "--source",
+            FEISHU_SOURCE,
+            "--output",
+            FEISHU_EXCEL_PATH,
+        ]
+
+    def _build_lark_auth_command(self):
+        return [
+            resolve_cli_python(),
+            "-u",
+            SETUP_LARK_CLI_PATH,
+        ]
+
+    def _build_upload_command(self, output_path, rows):
+        return [
+            resolve_cli_python(),
+            "-u",
+            UPLOAD_SCRIPT_PATH,
+            self.mode_var.get(),
+            rows,
+            "--excel",
+            output_path,
+            "--source",
+            FEISHU_UPLOAD_SOURCE,
+        ]
+
+    def _build_base_env(self):
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
+        return env
+
+    def _clear_log(self):
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+
+    def _start_download(self):
+        if self.worker_thread and self.worker_thread.is_alive():
+            return
+
+        command = self._build_download_command()
+        env = self._build_base_env()
+
+        self.current_task = "download"
+        self._clear_log()
+        self._set_running(True, task="download")
+        self._append_log("命令：\n")
+        self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
+
+        self.worker_thread = threading.Thread(
+            target=self._run_command_worker,
+            args=(command, env),
+            daemon=True,
+        )
+        self.worker_thread.start()
+
+    def _start_lark_auth(self):
+        if self.worker_thread and self.worker_thread.is_alive():
+            return
+
+        command = self._build_lark_auth_command()
+        env = self._build_base_env()
+
+        self.current_task = "auth"
+        self._clear_log()
+        self._set_running(True, task="auth")
+        self._append_log("命令：\n")
+        self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
+
+        self.worker_thread = threading.Thread(
+            target=self._run_command_worker,
+            args=(command, env),
+            daemon=True,
+        )
+        self.worker_thread.start()
+
+    def _start_upload(self):
+        if self.worker_thread and self.worker_thread.is_alive():
+            return
+
+        output_path = self.output_path_var.get().strip()
+        rows = self.rows_var.get().strip()
+        if not output_path:
+            messagebox.showerror("参数不完整", "请先填写输出 Excel 路径。")
+            return
+        if not os.path.exists(output_path):
+            messagebox.showerror("文件不存在", "输出 Excel 不存在，请先运行抓取生成结果文件。")
+            return
+        if not rows:
+            messagebox.showerror("参数不完整", "请填写要写回的行号。")
+            return
+
+        confirm = messagebox.askyesno(
+            "确认写回飞书",
+            "将把当前输出 Excel 中指定行的生成字段写回飞书文档。\n"
+            f"行号: {rows}\n"
+            "是否继续？",
+        )
+        if not confirm:
+            return
+
+        command = self._build_upload_command(output_path, rows)
+        env = self._build_base_env()
+
+        self.current_task = "upload"
+        self._clear_log()
+        self._set_running(True, task="upload")
+        self._append_log("命令：\n")
+        self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
+
+        self.worker_thread = threading.Thread(
+            target=self._run_command_worker,
+            args=(command, env),
+            daemon=True,
+        )
+        self.worker_thread.start()
+
     def _start_run(self):
         if self.worker_thread and self.worker_thread.is_alive():
             return
@@ -280,20 +443,16 @@ class LauncherApp:
             if not confirm:
                 return
 
-        env = os.environ.copy()
+        env = self._build_base_env()
         env["XHS_LOGIN_WAIT_SECONDS"] = login_wait
         env["XHS_REQUIRE_ENTER_CONFIRM"] = "0"
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONUTF8"] = "1"
-        env["PYTHONUNBUFFERED"] = "1"
 
         command = self._build_command(input_path, output_path, rows)
 
-        self.log_text.configure(state="normal")
-        self.log_text.delete("1.0", "end")
-        self.log_text.configure(state="disabled")
+        self.current_task = "run"
+        self._clear_log()
 
-        self._set_running(True)
+        self._set_running(True, task="run")
         self._append_log("命令：\n")
         self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
 
@@ -341,14 +500,37 @@ class LauncherApp:
             if event_type == "log":
                 self._append_log(payload)
             elif event_type == "done":
+                finished_task = self.current_task
+                self.current_task = ""
                 self._set_running(False)
                 if payload == 0:
-                    self._append_log("\n运行完成。\n")
-                    messagebox.showinfo("完成", "脚本执行完成。")
+                    if finished_task == "download":
+                        self.auto_output = True
+                        self.input_path_var.set(FEISHU_EXCEL_PATH)
+                        self._append_log("\n下载完成，已自动切换输入 Excel。\n")
+                        messagebox.showinfo("完成", "飞书 Excel 下载完成。")
+                    elif finished_task == "auth":
+                        self._append_log("\n飞书授权流程完成，可以点击下载飞书 Excel。\n")
+                        messagebox.showinfo("完成", "飞书授权流程完成。")
+                    elif finished_task == "upload":
+                        self._append_log("\n写回飞书完成。\n")
+                        messagebox.showinfo("完成", "写回飞书完成。")
+                    else:
+                        self._append_log("\n运行完成。\n")
+                        messagebox.showinfo("完成", "脚本执行完成。")
                 else:
-                    self._append_log(f"\n运行失败，退出码：{payload}\n")
-                    messagebox.showerror("失败", f"脚本执行失败，退出码：{payload}")
+                    if finished_task == "download":
+                        action_text = "下载"
+                    elif finished_task == "auth":
+                        action_text = "飞书授权"
+                    elif finished_task == "upload":
+                        action_text = "写回飞书"
+                    else:
+                        action_text = "脚本执行"
+                    self._append_log(f"\n{action_text}失败，退出码：{payload}\n")
+                    messagebox.showerror("失败", f"{action_text}失败，退出码：{payload}")
             elif event_type == "error":
+                self.current_task = ""
                 self._set_running(False)
                 self._append_log(f"\n启动失败：{payload}\n")
                 messagebox.showerror("启动失败", payload)
