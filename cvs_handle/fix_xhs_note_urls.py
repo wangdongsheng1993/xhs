@@ -1024,12 +1024,18 @@ def update_note_urls_csv(args, csv_path, output_path):
     failed = 0
     failed_items = []
 
+    session_mode = getattr(args, 'session_mode', 'rotate')
+
     with sync_playwright() as p:
         contexts = []
         pages = []
         current_session_idx = 0
         
-        print(f"\n同时打开 {len(session_dirs)} 个浏览器窗口...", flush=True)
+        if session_mode == "bind":
+            print(f"\n[绑定模式] 同时打开 {len(session_dirs)} 个浏览器窗口...", flush=True)
+        else:
+            print(f"\n[轮询模式] 同时打开 {len(session_dirs)} 个浏览器窗口...", flush=True)
+        
         for i, session_dir in enumerate(session_dirs):
             print(f"  - 启动账号{i+1}的浏览器...", flush=True)
             context = p.chromium.launch_persistent_context(
@@ -1559,6 +1565,7 @@ def build_arg_parser():
     parser.add_argument("--batch-size", type=int, default=30, help="每处理多少条后休息一次，0表示不休息，默认30")
     parser.add_argument("--batch-interval", type=int, default=30, help="批次休息秒数，默认30")
     parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，用于每条数据轮询账号")
+    parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=所有任务共享所有账号, bind=每个任务使用分配到的账号组")
     return parser
 
 

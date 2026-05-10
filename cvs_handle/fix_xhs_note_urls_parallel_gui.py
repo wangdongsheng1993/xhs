@@ -66,6 +66,7 @@ class ParallelNoteUrlFixerApp:
         self.batch_size_var = tk.StringVar(value="30")
         self.batch_interval_var = tk.StringVar(value="30")
         self.sessions_var = tk.StringVar(value="")
+        self.session_mode_var = tk.StringVar(value="rotate")
 
         self.retry_csv_var = tk.StringVar()
         self.retry_failed_var = tk.StringVar()
@@ -75,6 +76,7 @@ class ParallelNoteUrlFixerApp:
         self.retry_login_wait_var = tk.StringVar(value="50")
         self.retry_skip_no_title_var = tk.BooleanVar(value=True)
         self.retry_target_date_var = tk.StringVar(value=DEFAULT_TARGET_DATE)
+        self.retry_session_mode_var = tk.StringVar(value="rotate")
 
         self._build_ui()
         self.root.after(150, self._drain_log_queue)
@@ -158,8 +160,15 @@ class ParallelNoteUrlFixerApp:
         ttk.Entry(row4, textvariable=self.sessions_var, width=40).grid(row=0, column=1, padx=(6, 0))
         ttk.Button(row4, text="管理Session", command=self._open_session_manager).grid(row=0, column=2, padx=(6, 0))
 
-        hint = ttk.Label(settings, text="提示：多账号轮询可有效分散风控风险。点击'管理Session'初始化账号。", foreground="gray")
-        hint.grid(row=7, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        row5 = ttk.Frame(settings)
+        row5.grid(row=7, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        
+        ttk.Label(row5, text="账号模式").grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(row5, text="轮询(所有任务共享所有账号)", variable=self.session_mode_var, value="rotate").grid(row=0, column=1, padx=(6, 0))
+        ttk.Radiobutton(row5, text="绑定(每个任务分配账号组)", variable=self.session_mode_var, value="bind").grid(row=0, column=2, padx=(16, 0))
+
+        hint = ttk.Label(settings, text="提示：轮询模式-所有任务共享所有账号；绑定模式-账号平均分配给各任务，任务内轮询。", foreground="gray")
+        hint.grid(row=8, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
         retry_frame = ttk.LabelFrame(self.root, text="并行重试失败数据", padding=16)
         retry_frame.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 0))
@@ -383,6 +392,10 @@ class ParallelNoteUrlFixerApp:
         if sessions:
             command.extend(["--sessions", sessions])
         
+        session_mode = self.session_mode_var.get().strip()
+        if session_mode:
+            command.extend(["--session-mode", session_mode])
+        
         return command
 
     def _build_retry_command(self):
@@ -417,6 +430,14 @@ class ParallelNoteUrlFixerApp:
         batch_interval = self.batch_interval_var.get().strip()
         if batch_interval:
             command.extend(["--batch-interval", batch_interval])
+        
+        sessions = self.sessions_var.get().strip()
+        if sessions:
+            command.extend(["--sessions", sessions])
+        
+        session_mode = self.session_mode_var.get().strip()
+        if session_mode:
+            command.extend(["--session-mode", session_mode])
         
         return command
 

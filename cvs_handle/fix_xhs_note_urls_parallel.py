@@ -297,6 +297,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=30, help="每处理多少条后休息一次，0表示不休息，默认30")
     parser.add_argument("--batch-interval", type=int, default=30, help="批次休息秒数，默认30")
     parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，如 session1,session2,session3")
+    parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=所有任务共享所有账号, bind=每个任务使用分配到的账号组")
     args = parser.parse_args()
 
     excel_path = os.path.abspath(args.excel_path)
@@ -347,8 +348,15 @@ def main():
             return 1
     print(f"\n所有 {len(session_dirs)} 个账号登录状态检查完成", flush=True)
 
-    sessions_param = ",".join(session_dirs)
-    print(f"\n每条数据将轮询使用 {len(session_dirs)} 个账号", flush=True)
+    session_mode = args.session_mode
+    if session_mode == "bind" and args.workers > len(session_dirs):
+        print(f"错误: 绑定模式下，并行任务数({args.workers})不能超过账号数({len(session_dirs)})", flush=True)
+        return 1
+
+    if session_mode == "bind":
+        print(f"\n[绑定模式] 每个任务绑定一个账号", flush=True)
+    else:
+        print(f"\n[轮询模式] 每条数据轮询使用 {len(session_dirs)} 个账号", flush=True)
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -378,8 +386,25 @@ def main():
             "--per-item-timeout", str(args.per_item_timeout),
             "--detail-wait-ms", str(args.detail_wait_ms),
             "--login-wait", str(args.login_wait),
-            "--sessions", sessions_param,
+            "--session-mode", session_mode,
         ]
+        
+        if session_mode == "bind":
+            base_size = len(session_dirs) // args.workers
+            remainder = len(session_dirs) % args.workers
+            start_idx = i * base_size + min(i, remainder)
+            if i < remainder:
+                end_idx = start_idx + base_size + 1
+            else:
+                end_idx = start_idx + base_size
+            assigned_sessions = session_dirs[start_idx:end_idx]
+            sessions_param = ",".join(assigned_sessions)
+            command.extend(["--sessions", sessions_param])
+            print(f"  任务{i+1} → 账号{start_idx+1}-{end_idx}: {sessions_param}", flush=True)
+        else:
+            sessions_param = ",".join(session_dirs)
+            command.extend(["--sessions", sessions_param])
+        
         if args.only_empty:
             command.append("--only-empty")
         if args.headless:

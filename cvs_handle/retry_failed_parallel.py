@@ -299,6 +299,8 @@ def main():
     parser.add_argument("--target-date", default="", help="目标日期（格式：YYYY-MM-DD 或 MM-DD），用于提前停止滚动")
     parser.add_argument("--batch-size", type=int, default=30, help="每处理多少条后休息一次，0表示不休息，默认30")
     parser.add_argument("--batch-interval", type=int, default=30, help="批次休息秒数，默认30")
+    parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，如 session1,session2,session3")
+    parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=轮询(每条数据切换账号), bind=绑定(每个任务一个账号)")
     args = parser.parse_args()
 
     skip_no_title = args.skip_no_title and not args.no_skip_no_title
@@ -430,6 +432,11 @@ def main():
             command.extend(["--batch-size", str(args.batch_size)])
         if args.batch_interval:
             command.extend(["--batch-interval", str(args.batch_interval)])
+        
+        if args.sessions:
+            command.extend(["--sessions", args.sessions])
+        if args.session_mode:
+            command.extend(["--session-mode", args.session_mode])
 
         print(f"[任务 {i + 1}] 启动，处理 {len(chunks[i])} 条数据...", flush=True)
 
