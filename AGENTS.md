@@ -7,6 +7,14 @@ This repository is a Windows-first Python workspace for Xiaohongshu/抖音 data 
   - `xhs_excel_runner.py`: CLI 入口（品牌/电商/KOC）
   - `xhs_extractor.py`, `xhs_ecommerce_extractor.py`, `xhs_koc_extractor.py`, `xhs_steam_kol_extractor.py`
   - `xhs_gui_launcher.py`, `launch_gui.bat`
+- `cvs_handle/`: 小红书笔记URL修复（并行重试）
+  - `fix_xhs_note_urls.py`: 核心逻辑（查找/点击笔记）
+  - `fix_xhs_note_urls_parallel.py`: 并行处理入口
+  - `fix_xhs_note_urls_parallel_gui.py`: 主GUI界面
+  - `retry_failed.py`: 单进程重试失败数据
+  - `retry_failed_parallel.py`: 并行重试失败数据
+  - `run_parallel_gui.bat`: 启动入口
+  - `run_parallel.bat`: 命令行入口（可选）
 - `dianshang_xiaohongshu_sync/`: 电商小红书飞书表同步
   - `sync_kol_execute.py`, `sync_kol_execute_gui.py`, `run_sync_kol.bat`, `dianshang-xiaohongshu.md`
 - `pinpai_xiaohongshu_douyin_sync/`: 品牌小红书&抖音飞书表同步

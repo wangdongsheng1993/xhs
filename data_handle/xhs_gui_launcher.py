@@ -1,9 +1,11 @@
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
 import tkinter as tk
+from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
@@ -13,6 +15,7 @@ RUNNER_PATH = os.path.join(BASE_DIR, "xhs_excel_runner.py")
 DOWNLOAD_SCRIPT_PATH = os.path.join(BASE_DIR, "download_feishu_excel.py")
 SETUP_LARK_CLI_PATH = os.path.join(BASE_DIR, "setup_lark_cli.py")
 UPLOAD_SCRIPT_PATH = os.path.join(BASE_DIR, "upload_excel_to_feishu.py")
+LOG_DIR = os.path.join(BASE_DIR, "logs")
 FEISHU_SOURCE = os.getenv(
     "XHS_FEISHU_SOURCE",
     "https://mv21kbvltn.feishu.cn/wiki/PzBaw9C66iZtRFkPvfbcVCDqnBb",
@@ -20,6 +23,10 @@ FEISHU_SOURCE = os.getenv(
 FEISHU_UPLOAD_SOURCE = os.getenv(
     "XHS_FEISHU_UPLOAD_SOURCE",
     "https://mv21kbvltn.feishu.cn/wiki/PzBaw9C66iZtRFkPvfbcVCDqnBb",
+).strip()
+FEISHU_TEST_UPLOAD_SOURCE = os.getenv(
+    "XHS_FEISHU_TEST_UPLOAD_SOURCE",
+    "https://my.feishu.cn/wiki/QpPxwkBTpimeEjkvU5ycmpZvnvf",
 ).strip()
 FEISHU_EXCEL_PATH = os.path.join(BASE_DIR, "【内部深演智能】老板电器C5 提号表.xlsx")
 
@@ -38,6 +45,16 @@ MODE_SUFFIX_MAP = {
 }
 
 XLSX_FILE_TYPES = [("Excel files", "*.xlsx"), ("All files", "*.*")]
+
+
+TASK_LOG_LABELS = {
+    "download": "下载飞书Excel",
+    "auth": "飞书授权",
+    "run": "执行数据",
+    "workflow": "一键流程",
+    "upload_preview": "写回飞书",
+    "upload": "写回飞书",
+}
 
 
 def resolve_cli_python():
@@ -84,6 +101,11 @@ def get_default_excel_path():
     return os.path.join(BASE_DIR, candidates[0])
 
 
+def sanitize_filename_part(text):
+    text = re.sub(r'[\\/:*?"<>|\s]+', "_", str(text or "").strip())
+    return text.strip("._") or "未填写"
+
+
 class LauncherApp:
     def __init__(self, root):
         self.root = root
@@ -94,6 +116,11 @@ class LauncherApp:
         self.process = None
         self.worker_thread = None
         self.current_task = ""
+        self.pending_upload_command = None
+        self.pending_upload_env = None
+        self.pending_upload_source = ""
+        self.current_log_path = ""
+        self.workflow_active = False
         self.log_queue = queue.Queue()
         self.auto_output = True
 
@@ -102,6 +129,7 @@ class LauncherApp:
         self.output_path_var = tk.StringVar(value=derive_output_path(self.input_path_var.get(), self.mode_var.get()))
         self.rows_var = tk.StringVar()
         self.verbose_var = tk.BooleanVar(value=False)
+        self.use_test_upload_var = tk.BooleanVar(value=False)
         self.login_wait_var = tk.StringVar(value="10")
 
         self._build_ui()
@@ -161,10 +189,13 @@ class LauncherApp:
         ttk.Entry(login_row, textvariable=self.login_wait_var, width=8).grid(row=0, column=0, sticky="w")
         ttk.Label(login_row, text="秒").grid(row=0, column=1, padx=(6, 12))
         ttk.Checkbutton(login_row, text="详细日志", variable=self.verbose_var).grid(row=0, column=2, sticky="w")
+        ttk.Checkbutton(login_row, text="写回测试文档", variable=self.use_test_upload_var).grid(
+            row=0, column=3, padx=(12, 0), sticky="w"
+        )
 
         action_bar = ttk.Frame(self.root, padding=(16, 12))
         action_bar.grid(row=2, column=0, sticky="ew")
-        action_bar.columnconfigure(4, weight=1)
+        action_bar.columnconfigure(5, weight=1)
 
         self.run_button = ttk.Button(action_bar, text="开始运行", command=self._start_run)
         self.run_button.grid(row=0, column=0, sticky="w")
@@ -182,8 +213,11 @@ class LauncherApp:
         self.upload_button = ttk.Button(action_bar, text="写回飞书", command=self._start_upload)
         self.upload_button.grid(row=0, column=3, sticky="w", padx=(12, 0))
 
+        self.workflow_button = ttk.Button(action_bar, text="一键下载处理写回", command=self._start_workflow)
+        self.workflow_button.grid(row=0, column=4, sticky="w", padx=(12, 0))
+
         ttk.Button(action_bar, text="打开所在文件夹", command=self._open_output_folder).grid(
-            row=0, column=5, sticky="e"
+            row=0, column=6, sticky="e"
         )
 
         log_frame = ttk.LabelFrame(self.root, text="运行日志", padding=16)
@@ -242,6 +276,12 @@ class LauncherApp:
         self.log_text.insert("end", text)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+        if self.current_log_path:
+            try:
+                with open(self.current_log_path, "a", encoding="utf-8", errors="replace") as file:
+                    file.write(text)
+            except Exception:
+                pass
 
     def _log(self, text):
         self.log_queue.put(("log", text))
@@ -252,20 +292,26 @@ class LauncherApp:
         self.download_button.configure(state=state)
         self.auth_button.configure(state=state)
         self.upload_button.configure(state=state)
+        self.workflow_button.configure(state=state)
         if is_running:
             if task == "download":
                 self.download_button.configure(text="下载中...")
             elif task == "auth":
                 self.auth_button.configure(text="授权中...")
+            elif task == "upload_preview":
+                self.upload_button.configure(text="预览中...")
             elif task == "upload":
                 self.upload_button.configure(text="写回中...")
             else:
                 self.run_button.configure(text="运行中...")
+            if self.workflow_active:
+                self.workflow_button.configure(text="一键执行中...")
         else:
             self.run_button.configure(text="开始运行")
             self.auth_button.configure(text="飞书授权")
             self.download_button.configure(text="下载飞书 Excel")
             self.upload_button.configure(text="写回飞书")
+            self.workflow_button.configure(text="一键下载处理写回")
 
     def _validate_form(self):
         input_path = self.input_path_var.get().strip()
@@ -301,6 +347,11 @@ class LauncherApp:
             command.append("--verbose")
         return command
 
+    def _get_upload_source(self):
+        if self.use_test_upload_var.get():
+            return FEISHU_TEST_UPLOAD_SOURCE
+        return FEISHU_UPLOAD_SOURCE
+
     def _build_download_command(self):
         return [
             resolve_cli_python(),
@@ -319,8 +370,8 @@ class LauncherApp:
             SETUP_LARK_CLI_PATH,
         ]
 
-    def _build_upload_command(self, output_path, rows):
-        return [
+    def _build_upload_command(self, output_path, rows, dry_run=False):
+        command = [
             resolve_cli_python(),
             "-u",
             UPLOAD_SCRIPT_PATH,
@@ -329,8 +380,11 @@ class LauncherApp:
             "--excel",
             output_path,
             "--source",
-            FEISHU_UPLOAD_SOURCE,
+            self._get_upload_source(),
         ]
+        if dry_run:
+            command.extend(["--dry-run", "--preview-limit", "50"])
+        return command
 
     def _build_base_env(self):
         env = os.environ.copy()
@@ -344,6 +398,59 @@ class LauncherApp:
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
 
+    def _start_log_file(self, task):
+        os.makedirs(LOG_DIR, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        task_label = TASK_LOG_LABELS.get(task, task)
+        mode = self.mode_var.get().strip() or "mode"
+        rows = self.rows_var.get().strip() or "no_rows"
+        filename = "_".join(
+            sanitize_filename_part(part)
+            for part in (timestamp, task_label, mode, rows)
+        )
+        self.current_log_path = os.path.join(LOG_DIR, f"{filename}.log")
+        self._append_log(f"日志文件: {self.current_log_path}\n\n")
+
+    def _start_command_task(self, command, env, task, clear_log=True, log_task=None):
+        self.current_task = task
+        if clear_log:
+            self._clear_log()
+            self._start_log_file(log_task or task)
+        self._set_running(True, task=task)
+        self._append_log("命令：\n")
+        self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
+
+        self.worker_thread = threading.Thread(
+            target=self._run_command_worker,
+            args=(command, env),
+            daemon=True,
+        )
+        self.worker_thread.start()
+
+    def _build_run_env_and_command(self):
+        input_path, output_path, rows, login_wait = self._validate_form()
+        env = self._build_base_env()
+        env["XHS_LOGIN_WAIT_SECONDS"] = login_wait
+        env["XHS_REQUIRE_ENTER_CONFIRM"] = "0"
+        return env, self._build_command(input_path, output_path, rows)
+
+    def _start_upload_preview(self, clear_log=True):
+        output_path = self.output_path_var.get().strip()
+        rows = self.rows_var.get().strip()
+        if not output_path:
+            raise ValueError("请先填写输出 Excel 路径。")
+        if not os.path.exists(output_path):
+            raise ValueError("输出 Excel 不存在，请先运行抓取生成结果文件。")
+        if not rows:
+            raise ValueError("请填写要写回的行号。")
+
+        env = self._build_base_env()
+        preview_command = self._build_upload_command(output_path, rows, dry_run=True)
+        self.pending_upload_command = self._build_upload_command(output_path, rows, dry_run=False)
+        self.pending_upload_env = env
+        self.pending_upload_source = self._get_upload_source()
+        self._start_command_task(preview_command, env, "upload_preview", clear_log=clear_log)
+
     def _start_download(self):
         if self.worker_thread and self.worker_thread.is_alive():
             return
@@ -353,6 +460,7 @@ class LauncherApp:
 
         self.current_task = "download"
         self._clear_log()
+        self._start_log_file("download")
         self._set_running(True, task="download")
         self._append_log("命令：\n")
         self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
@@ -373,6 +481,7 @@ class LauncherApp:
 
         self.current_task = "auth"
         self._clear_log()
+        self._start_log_file("auth")
         self._set_running(True, task="auth")
         self._append_log("命令：\n")
         self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
@@ -388,42 +497,49 @@ class LauncherApp:
         if self.worker_thread and self.worker_thread.is_alive():
             return
 
-        output_path = self.output_path_var.get().strip()
-        rows = self.rows_var.get().strip()
-        if not output_path:
-            messagebox.showerror("参数不完整", "请先填写输出 Excel 路径。")
-            return
-        if not os.path.exists(output_path):
-            messagebox.showerror("文件不存在", "输出 Excel 不存在，请先运行抓取生成结果文件。")
-            return
-        if not rows:
-            messagebox.showerror("参数不完整", "请填写要写回的行号。")
+        try:
+            self._start_upload_preview()
+        except ValueError as exc:
+            messagebox.showerror("参数不完整", str(exc))
             return
 
+    def _start_workflow(self):
+        if self.worker_thread and self.worker_thread.is_alive():
+            return
+
+        rows = self.rows_var.get().strip()
+        login_wait = self.login_wait_var.get().strip()
+        if not rows:
+            messagebox.showerror("参数不完整", "请填写行号。")
+            return
+        if not login_wait.isdigit():
+            messagebox.showerror("参数不完整", "登录等待时间必须是整数秒。")
+            return
+
+        input_path = FEISHU_EXCEL_PATH
+        output_path = derive_output_path(input_path, self.mode_var.get())
+        self.auto_output = True
+        self.input_path_var.set(input_path)
+        self.output_path_var.set(output_path)
+
+        upload_source = self._get_upload_source()
         confirm = messagebox.askyesno(
-            "确认写回飞书",
-            "将把当前输出 Excel 中指定行的生成字段写回飞书文档。\n"
+            "确认一键执行",
+            "将依次执行：下载飞书 Excel -> 执行当前 Sheet/行号 -> 写回预览 -> 确认后写回飞书。\n"
+            f"Sheet: {self.mode_var.get()}\n"
             f"行号: {rows}\n"
+            f"输入 Excel: {input_path}\n"
+            f"输出 Excel: {output_path}\n"
+            f"写回文档: {upload_source}\n"
             "是否继续？",
         )
         if not confirm:
             return
 
-        command = self._build_upload_command(output_path, rows)
+        self.workflow_active = True
+        command = self._build_download_command()
         env = self._build_base_env()
-
-        self.current_task = "upload"
-        self._clear_log()
-        self._set_running(True, task="upload")
-        self._append_log("命令：\n")
-        self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
-
-        self.worker_thread = threading.Thread(
-            target=self._run_command_worker,
-            args=(command, env),
-            daemon=True,
-        )
-        self.worker_thread.start()
+        self._start_command_task(command, env, "download", log_task="workflow")
 
     def _start_run(self):
         if self.worker_thread and self.worker_thread.is_alive():
@@ -443,14 +559,11 @@ class LauncherApp:
             if not confirm:
                 return
 
-        env = self._build_base_env()
-        env["XHS_LOGIN_WAIT_SECONDS"] = login_wait
-        env["XHS_REQUIRE_ENTER_CONFIRM"] = "0"
-
-        command = self._build_command(input_path, output_path, rows)
+        env, command = self._build_run_env_and_command()
 
         self.current_task = "run"
         self._clear_log()
+        self._start_log_file("run")
 
         self._set_running(True, task="run")
         self._append_log("命令：\n")
@@ -508,21 +621,76 @@ class LauncherApp:
                         self.auto_output = True
                         self.input_path_var.set(FEISHU_EXCEL_PATH)
                         self._append_log("\n下载完成，已自动切换输入 Excel。\n")
+                        if self.workflow_active:
+                            try:
+                                env, command = self._build_run_env_and_command()
+                            except ValueError as exc:
+                                self.workflow_active = False
+                                self._append_log(f"\n一键流程停止：{exc}\n")
+                                messagebox.showerror("一键流程停止", str(exc))
+                                continue
+                            self._append_log("\n一键流程：开始执行数据处理。\n")
+                            self._start_command_task(command, env, "run", clear_log=False)
+                            continue
                         messagebox.showinfo("完成", "飞书 Excel 下载完成。")
                     elif finished_task == "auth":
                         self._append_log("\n飞书授权流程完成，可以点击下载飞书 Excel。\n")
                         messagebox.showinfo("完成", "飞书授权流程完成。")
+                    elif finished_task == "run":
+                        if self.workflow_active:
+                            self._append_log("\n一键流程：数据处理完成，开始写回预览。\n")
+                            try:
+                                self._start_upload_preview(clear_log=False)
+                            except ValueError as exc:
+                                self.workflow_active = False
+                                self._append_log(f"\n一键流程停止：{exc}\n")
+                                messagebox.showerror("一键流程停止", str(exc))
+                            continue
+                        self._append_log("\n运行完成。\n")
+                        messagebox.showinfo("完成", "脚本执行完成。")
+                    elif finished_task == "upload_preview":
+                        self._append_log("\n写回预览完成，请检查上方明细。\n")
+                        confirm = messagebox.askyesno(
+                            "确认写回飞书",
+                            "预览已完成，尚未写入飞书。\n"
+                            f"目标文档: {self.pending_upload_source}\n"
+                            "确认按预览内容实际写回？",
+                        )
+                        if confirm and self.pending_upload_command and self.pending_upload_env:
+                            command = self.pending_upload_command
+                            env = self.pending_upload_env
+                            self.pending_upload_command = None
+                            self.pending_upload_env = None
+                            self.pending_upload_source = ""
+                            self._start_command_task(command, env, "upload", clear_log=False)
+                        else:
+                            self.workflow_active = False
+                            self.pending_upload_command = None
+                            self.pending_upload_env = None
+                            self.pending_upload_source = ""
+                            self._append_log("\n已取消实际写回。\n")
                     elif finished_task == "upload":
                         self._append_log("\n写回飞书完成。\n")
-                        messagebox.showinfo("完成", "写回飞书完成。")
+                        if self.workflow_active:
+                            self.workflow_active = False
+                            messagebox.showinfo("完成", "一键流程完成。")
+                        else:
+                            messagebox.showinfo("完成", "写回飞书完成。")
                     else:
                         self._append_log("\n运行完成。\n")
                         messagebox.showinfo("完成", "脚本执行完成。")
                 else:
+                    if self.workflow_active:
+                        self.workflow_active = False
                     if finished_task == "download":
                         action_text = "下载"
                     elif finished_task == "auth":
                         action_text = "飞书授权"
+                    elif finished_task == "upload_preview":
+                        action_text = "写回预览"
+                        self.pending_upload_command = None
+                        self.pending_upload_env = None
+                        self.pending_upload_source = ""
                     elif finished_task == "upload":
                         action_text = "写回飞书"
                     else:
@@ -531,6 +699,10 @@ class LauncherApp:
                     messagebox.showerror("失败", f"{action_text}失败，退出码：{payload}")
             elif event_type == "error":
                 self.current_task = ""
+                self.workflow_active = False
+                self.pending_upload_command = None
+                self.pending_upload_env = None
+                self.pending_upload_source = ""
                 self._set_running(False)
                 self._append_log(f"\n启动失败：{payload}\n")
                 messagebox.showerror("启动失败", payload)

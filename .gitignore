@@ -20,7 +20,7 @@ ENV/
 .env.*
 
 # Playwright / browser session data
-browser_session/
+browser_session*/
 ecom_screenshots/
 
 # Local debug and temp files
