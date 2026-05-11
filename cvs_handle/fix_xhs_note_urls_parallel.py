@@ -6,6 +6,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 from openpyxl import load_workbook, Workbook
@@ -387,6 +388,7 @@ def main():
             "--detail-wait-ms", str(args.detail_wait_ms),
             "--login-wait", str(args.login_wait),
             "--session-mode", session_mode,
+            "--log-file", os.path.join(BASE_DIR, "logs", f"fix_urls_{session_id}_worker{i}.log"),
         ]
         
         if session_mode == "bind":
@@ -418,10 +420,8 @@ def main():
         if args.target_date:
             command.extend(["--target-date", args.target_date])
         
-        if args.batch_size:
-            command.extend(["--batch-size", str(args.batch_size)])
-        if args.batch_interval:
-            command.extend(["--batch-interval", str(args.batch_interval)])
+        command.extend(["--batch-size", str(args.batch_size)])
+        command.extend(["--batch-interval", str(args.batch_interval)])
 
         print(f"[任务 {i + 1}] 启动...", flush=True)
 
@@ -452,28 +452,45 @@ def main():
     print(f"会话ID: {session_id}", flush=True)
     print("=" * 60, flush=True)
 
+    def _reader_thread(proc, task_id, output_list):
+        try:
+            for line in proc.stdout:
+                output_list.append((task_id, line.rstrip()))
+        except Exception:
+            pass
+
+    reader_outputs = []
+    reader_threads = []
+    for i, p in enumerate(processes):
+        out_list = []
+        reader_outputs.append(out_list)
+        t = threading.Thread(target=_reader_thread, args=(p, i + 1, out_list), daemon=True)
+        t.start()
+        reader_threads.append(t)
+
     try:
         while True:
-            all_done = True
-            for i, p in enumerate(processes):
-                if p.poll() is None:
-                    all_done = False
-                    try:
-                        line = p.stdout.readline()
-                        if line:
-                            print(f"[任务 {i + 1}] {line.rstrip()}", flush=True)
-                    except Exception:
-                        pass
-                else:
-                    remaining = p.stdout.read() if p.stdout else ""
-                    if remaining:
-                        for line in remaining.split("\n"):
-                            if line.strip():
-                                print(f"[任务 {i + 1}] {line}", flush=True)
+            any_new_output = False
+            for i, out_list in enumerate(reader_outputs):
+                while out_list:
+                    task_id, line = out_list.pop(0)
+                    if line:
+                        print(f"[任务 {task_id}] {line}", flush=True)
+                        any_new_output = True
 
+            all_done = all(p.poll() is not None for p in processes)
             if all_done:
+                for t in reader_threads:
+                    t.join(timeout=2)
+                for i, out_list in enumerate(reader_outputs):
+                    while out_list:
+                        task_id, line = out_list.pop(0)
+                        if line:
+                            print(f"[任务 {task_id}] {line}", flush=True)
                 break
-            time.sleep(0.05)
+
+            if not any_new_output:
+                time.sleep(0.05)
     except KeyboardInterrupt:
         print("\n用户中断，正在停止所有进程...", flush=True)
         _cleanup_processes()

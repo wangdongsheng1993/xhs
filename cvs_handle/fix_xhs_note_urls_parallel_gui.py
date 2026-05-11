@@ -78,6 +78,8 @@ class ParallelNoteUrlFixerApp:
         self.retry_target_date_var = tk.StringVar(value=DEFAULT_TARGET_DATE)
         self.retry_session_mode_var = tk.StringVar(value="rotate")
 
+        self.batch_files = []
+
         self._build_ui()
         self.root.after(150, self._drain_log_queue)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)

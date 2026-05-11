@@ -1,5 +1,6 @@
 import argparse
 import csv
+import logging
 import os
 import random
 import re
@@ -16,6 +17,48 @@ from playwright.sync_api import sync_playwright
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_DIR = os.path.dirname(BASE_DIR)
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+
+_logger = None
+_log_file_path = None
+
+
+def setup_logger(log_path=None):
+    global _logger, _log_file_path
+    if _logger:
+        return _logger
+    os.makedirs(LOG_DIR, exist_ok=True)
+    if not log_path:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = os.path.join(LOG_DIR, f"fix_urls_{ts}.log")
+    _log_file_path = log_path
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
+    logger = logging.getLogger("fix_xhs_note_urls")
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+
+    fh = logging.FileHandler(log_path, encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-5s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter("%(message)s"))
+
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    _logger = logger
+    logger.info(f"日志文件: {log_path}")
+    return logger
+
+
+def log(msg, level="info"):
+    if _logger is None:
+        setup_logger()
+    getattr(_logger, level, _logger.info)(msg)
+
+
 DEFAULT_EXCEL_PATH = os.path.join(BASE_DIR, "小红书笔记列表_规范Excel版.xlsx")
 DEFAULT_SHEET_NAME = "小红书笔记列表"
 DEFAULT_USER_DATA_DIR = os.path.join(REPO_DIR, "browser_session")
@@ -210,7 +253,7 @@ def save_workbook(wb, output_path):
     except PermissionError:
         fallback_path = fallback_output_path(output_path)
         wb.save(fallback_path)
-        print(f"  - 目标文件被占用，已改存到: {fallback_path}", flush=True)
+        log(f"  - 目标文件被占用，已改存到: {fallback_path}")
         return fallback_path
 
 
@@ -221,14 +264,14 @@ def goto_with_retry(page, url, timeout_ms=45000, retries=2):
             resp = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             status = resp.status if resp else "无响应对象"
             final_url = page.url
-            print(f"  - 页面加载完成: status={status}, 最终URL={final_url[:100]}", flush=True)
+            log(f"  - 页面加载完成: status={status}, 最终URL={final_url[:100]}")
             return True
         except Exception as exc:
             last_error = exc
             if attempt >= retries:
-                print(f"  - 页面打开失败(已重试{retries}次): {exc}", flush=True)
+                log(f"  - 页面打开失败(已重试{retries}次): {exc}")
                 raise
-            print(f"  - 页面打开失败，准备重试({attempt + 1}/{retries}): {exc}", flush=True)
+            log(f"  - 页面打开失败，准备重试({attempt + 1}/{retries}): {exc}")
             page.wait_for_timeout(1200)
     if last_error:
         raise last_error
@@ -247,17 +290,17 @@ def click_notes_tab_if_visible(page):
             tabs = page.locator(selector).filter(has_text="笔记")
             count = min(tabs.count(), 3)
             if count > 0:
-                print(f"  - [笔记Tab] 选择器 '{selector}' 找到 {count} 个匹配", flush=True)
+                log(f"  - [笔记Tab] 选择器 '{selector}' 找到 {count} 个匹配")
             for index in range(count):
                 tab = tabs.nth(index)
                 if tab.is_visible(timeout=500):
                     tab.click(timeout=1500)
                     page.wait_for_timeout(800)
-                    print(f"  - [笔记Tab] 已点击选择器 '{selector}' 第{index}个tab", flush=True)
+                    log(f"  - [笔记Tab] 已点击选择器 '{selector}' 第{index}个tab")
                     return True
         except Exception as exc:
-            print(f"  - [笔记Tab] 选择器 '{selector}' 查找/点击异常: {exc}", flush=True)
-    print(f"  - [笔记Tab] 未找到可见的笔记Tab (尝试了 {len(selectors)} 个选择器)", flush=True)
+            log(f"  - [笔记Tab] 选择器 '{selector}' 查找/点击异常: {exc}")
+    log(f"  - [笔记Tab] 未找到可见的笔记Tab (尝试了 {len(selectors)} 个选择器)")
     return False
 
 
@@ -265,6 +308,7 @@ def find_note_candidate(page, title):
     target = normalize_text(title)
     if not target:
         return None
+    log(f"  - [查找卡片] 目标标题: raw='{title[:60]}' normalized='{target[:60]}' len={len(target)}")
 
     result = page.evaluate(
         """
@@ -462,20 +506,20 @@ def find_note_candidate(page, title):
         total_candidates = result.get("totalCandidates", 0)
         top_scores = result.get("topScores", [])
         if best:
-            print(f"  - [查找卡片] 找到匹配: score={best.get('score', 0)} noteId={best.get('noteId', '')} href={normalize_note_url(best.get('href', ''))[:80]} 坐标=({best.get('x', 0):.0f},{best.get('y', 0):.0f}) 尺寸={best.get('width', 0):.0f}x{best.get('height', 0):.0f}", flush=True)
+            log(f"  - [查找卡片] 找到匹配: score={best.get('score', 0)} noteId={best.get('noteId', '')} href={normalize_note_url(best.get('href', ''))[:80]} 坐标=({best.get('x', 0):.0f},{best.get('y', 0):.0f}) 尺寸={best.get('width', 0):.0f}x{best.get('height', 0):.0f}")
         else:
-            print(f"  - [查找卡片] 未找到匹配: 页面锚点数={total_anchors}, 候选数={total_candidates}, 目标标题={target[:40]}", flush=True)
+            log(f"  - [查找卡片] 未找到匹配: 页面锚点数={total_anchors}, 候选数={total_candidates}, 目标标题={target[:40]}")
         if top_scores:
             scores_desc = ", ".join(f"[score={s['score']} noteId={s['noteId']} text={s['text'][:20]}]" for s in top_scores)
-            print(f"  - [查找卡片] 候选排名: {scores_desc}", flush=True)
+            log(f"  - [查找卡片] 候选排名: {scores_desc}")
         return best
-    print(f"  - [查找卡片] JS执行返回空, 目标标题={target[:40]}", flush=True)
+    log(f"  - [查找卡片] JS执行返回空, 目标标题={target[:40]}")
     return None
 
 
 def click_note_candidate(page, candidate):
     if not candidate or not is_clickable_candidate_link(candidate.get("href")):
-        print(f"  - [点击卡片] 候选无效或链接不可点击: href={normalize_note_url(candidate.get('href', ''))[:80] if candidate else 'None'}", flush=True)
+        log(f"  - [点击卡片] 候选无效或链接不可点击: href={normalize_note_url(candidate.get('href', ''))[:80] if candidate else 'None'}")
         return False
 
     viewport = page.viewport_size or {}
@@ -487,11 +531,11 @@ def click_note_candidate(page, candidate):
         and (not viewport_width or candidate["x"] < viewport_width)
         and (not viewport_height or candidate["y"] < viewport_height)
     ):
-        print(f"  - [点击卡片] 方式1-坐标点击: ({candidate['x']:.0f}, {candidate['y']:.0f}), viewport=({viewport_width}x{viewport_height})", flush=True)
+        log(f"  - [点击卡片] 方式1-坐标点击: ({candidate['x']:.0f}, {candidate['y']:.0f}), viewport=({viewport_width}x{viewport_height})")
         page.mouse.click(float(candidate["x"]), float(candidate["y"]))
         return True
 
-    print(f"  - [点击卡片] 方式1失败(坐标越界或为0: x={candidate.get('x', 0):.0f}, y={candidate.get('y', 0):.0f}, viewport={viewport_width}x{viewport_height}), 尝试方式2-JS查找元素点击", flush=True)
+    log(f"  - [点击卡片] 方式1失败(坐标越界或为0: x={candidate.get('x', 0):.0f}, y={candidate.get('y', 0):.0f}, viewport={viewport_width}x{viewport_height}), 尝试方式2-JS查找元素点击")
 
     point = page.evaluate(
         """
@@ -548,12 +592,12 @@ def click_note_candidate(page, candidate):
     )
 
     if point and point.get("x", 0) > 0 and point.get("y", 0) > 0:
-        print(f"  - [点击卡片] 方式2-JS定位点击: ({point['x']:.0f}, {point['y']:.0f}), 尺寸={point.get('width', 0):.0f}x{point.get('height', 0):.0f}", flush=True)
+        log(f"  - [点击卡片] 方式2-JS定位点击: ({point['x']:.0f}, {point['y']:.0f}), 尺寸={point.get('width', 0):.0f}x{point.get('height', 0):.0f}")
         page.wait_for_timeout(300)
         page.mouse.click(float(point["x"]), float(point["y"]))
         return True
 
-    print(f"  - [点击卡片] 方式2失败(JS未找到有效坐标), 尝试方式3-直接anchor.click()", flush=True)
+    log(f"  - [点击卡片] 方式2失败(JS未找到有效坐标), 尝试方式3-直接anchor.click()")
     js_result = page.evaluate(
         """
         ({ href }) => {
@@ -576,7 +620,7 @@ def click_note_candidate(page, candidate):
         """,
         {"href": candidate.get("href")},
     )
-    print(f"  - [点击卡片] 方式3-anchor.click()结果: {js_result}", flush=True)
+    log(f"  - [点击卡片] 方式3-anchor.click()结果: {js_result}")
     return js_result
 
 
@@ -613,7 +657,7 @@ def wait_for_current_note_url(page, expected_note_id="", timeout_ms=6000, requir
     expected_note_id = str(expected_note_id or "").strip()
     check_count = 0
     first_url = normalize_note_url(page.url)
-    print(f"  - [等待地址栏] 开始等待: 当前URL={first_url[:80]}, 期望noteId={expected_note_id}, 超时={timeout_ms}ms, 需要xsec_token={require_xsec_token}", flush=True)
+    log(f"  - [等待地址栏] 开始等待: 当前URL={first_url[:80]}, 期望noteId={expected_note_id}, 超时={timeout_ms}ms, 需要xsec_token={require_xsec_token}")
     while time.time() < deadline:
         current_url = normalize_note_url(page.url)
         current_note_id = extract_note_id(current_url)
@@ -622,16 +666,16 @@ def wait_for_current_note_url(page, expected_note_id="", timeout_ms=6000, requir
             if not expected_note_id or current_note_id == expected_note_id:
                 best = current_url
                 if is_valid_address_bar_note_url(current_url, require_xsec_token=require_xsec_token):
-                    print(f"  - [等待地址栏] 成功: 检查{check_count}次, URL={current_url[:80]}", flush=True)
+                    log(f"  - [等待地址栏] 成功: 检查{check_count}次, URL={current_url[:80]}")
                     return current_url
         page.wait_for_timeout(250)
     elapsed = time.time() - (deadline - timeout_ms / 1000)
     if best:
-        print(f"  - [等待地址栏] 超时{elapsed:.1f}s/{timeout_ms/1000:.1f}s 检查{check_count}次, 有基础URL但无xsec_token: {best[:80]}", flush=True)
+        log(f"  - [等待地址栏] 超时{elapsed:.1f}s/{timeout_ms/1000:.1f}s 检查{check_count}次, 有基础URL但无xsec_token: {best[:80]}")
     else:
         final_url = normalize_note_url(page.url)
         final_note_id = extract_note_id(final_url)
-        print(f"  - [等待地址栏] 超时{elapsed:.1f}s/{timeout_ms/1000:.1f}s 检查{check_count}次, 地址栏未跳转到笔记页, 最终URL={final_url[:80]}, noteId={final_note_id}", flush=True)
+        log(f"  - [等待地址栏] 超时{elapsed:.1f}s/{timeout_ms/1000:.1f}s 检查{check_count}次, 地址栏未跳转到笔记页, 最终URL={final_url[:80]}, noteId={final_note_id}")
     if not require_xsec_token and best:
         return best
     return ""
@@ -675,12 +719,13 @@ def check_verification_popup(page, max_wait_sec=120):
             """
         )
         if not indicators.get("hasCaptcha") and not indicators.get("hasLoginModal"):
+            log(f"  - [风控检测] 无验证弹窗/登录弹窗，页面正常", level="debug")
             return True
 
         if indicators.get("hasCaptcha"):
-            print(f"  - [风控检测] 检测到验证弹窗！请在浏览器中手动完成验证，最多等待 {max_wait_sec} 秒...", flush=True)
+            log(f"  - [风控检测] 检测到验证弹窗！请在浏览器中手动完成验证，最多等待 {max_wait_sec} 秒...")
         if indicators.get("hasLoginModal"):
-            print(f"  - [风控检测] 检测到登录弹窗！请在浏览器中完成登录，最多等待 {max_wait_sec} 秒...", flush=True)
+            log(f"  - [风控检测] 检测到登录弹窗！请在浏览器中完成登录，最多等待 {max_wait_sec} 秒...")
 
         deadline = time.time() + max_wait_sec
         while time.time() < deadline:
@@ -715,19 +760,19 @@ def check_verification_popup(page, max_wait_sec=120):
                     """
                 )
                 if not recheck.get("hasCaptcha") and not recheck.get("hasLoginModal"):
-                    print("  - [风控检测] 验证/登录已完成，继续执行", flush=True)
+                    log("  - [风控检测] 验证/登录已完成，继续执行")
                     page.wait_for_timeout(random.randint(1000, 2000))
                     return True
             except Exception:
                 pass
             remaining = int(deadline - time.time())
             if remaining > 0 and remaining % 10 == 0:
-                print(f"  - [风控检测] 仍在等待验证... 剩余 {remaining} 秒", flush=True)
+                log(f"  - [风控检测] 仍在等待验证... 剩余 {remaining} 秒")
 
-        print("  - [风控检测] 验证等待超时，继续执行（可能仍被限制）", flush=True)
+        log("  - [风控检测] 验证等待超时，继续执行（可能仍被限制）")
         return False
     except Exception as exc:
-        print(f"  - [风控检测] 检测异常: {exc}", flush=True)
+        log(f"  - [风控检测] 检测异常: {exc}")
         return True
 
 
@@ -749,16 +794,43 @@ def locate_note_url(
 ):
     homepage_url = normalize_homepage_url(homepage_url)
     target_date_str = target_date.strftime("%Y-%m-%d") if target_date else "未设置"
-    print(f"  - [定位流程] 开始: 主页={homepage_url} 查找标题={title[:40]} max_scrolls={max_scrolls} detail_wait_ms={detail_wait_ms} require_xsec_token={require_xsec_token} per_item_timeout={per_item_timeout_sec}s target_date={target_date_str}", flush=True)
+    log(f"  - [定位流程] 开始: 主页={homepage_url} 查找标题={title[:40]} max_scrolls={max_scrolls} detail_wait_ms={detail_wait_ms} require_xsec_token={require_xsec_token} per_item_timeout={per_item_timeout_sec}s target_date={target_date_str}")
     start_time = time.time()
     goto_with_retry(page, homepage_url)
     page.wait_for_timeout(random.randint(1500, 2500))
     
-    check_verification_popup(page)
+    page_status = page.evaluate("""
+    () => {
+        const body = document.body || {};
+        const text = (body.innerText || '').substring(0, 300);
+        const hasLoginPrompt = text.includes('登录') && (text.includes('注册') || text.includes('手机号'));
+        const hasCaptcha = text.includes('请完成验证') || text.includes('请通过验证') || text.includes('滑动验证');
+        const hasNoteCards = document.querySelectorAll('a[href*="/explore/"], a[href*="/user/profile/"]').length;
+        const currentUrl = location.href;
+        const title = document.title || '';
+        return { hasLoginPrompt, hasCaptcha, hasNoteCards, currentUrl, title, textPreview: text.substring(0, 150) };
+    }
+    """)
+    log(f"  - [页面状态] URL={page_status.get('currentUrl', '')[:80]} 标题='{page_status.get('title', '')}' 登录提示={page_status.get('hasLoginPrompt')} 验证码={page_status.get('hasCaptcha')} 笔记卡片数={page_status.get('hasNoteCards')}", level="debug")
+    if page_status.get("hasLoginPrompt"):
+        log(f"  - [页面状态] ⚠️ 检测到登录提示! 页面文本: {page_status.get('textPreview', '')[:100]}", level="warning")
+    if page_status.get("hasCaptcha"):
+        log(f"  - [页面状态] ⚠️ 检测到验证码! 页面文本: {page_status.get('textPreview', '')[:100]}", level="warning")
+    
+    verification_ok = check_verification_popup(page)
+    if not verification_ok:
+        log(f"  - [定位流程] 验证/登录未完成，页面可能无法正常加载笔记，跳过此条")
+        return ""
     
     tab_clicked = click_notes_tab_if_visible(page)
     if not tab_clicked:
-        print(f"  - [定位流程] 未点击到笔记Tab，页面可能不是用户主页或Tab结构已变", flush=True)
+        log(f"  - [定位流程] 未点击到笔记Tab，页面可能不是用户主页或Tab结构已变")
+    
+    try:
+        page.wait_for_selector('a[href*="/explore/"], a[href*="/user/profile/"]', timeout=5000)
+        page.wait_for_timeout(random.randint(500, 1000))
+    except Exception:
+        log(f"  - [定位流程] 等待页面元素超时，继续尝试查找")
 
     last_height = 0
     no_change_count = 0
@@ -766,28 +838,80 @@ def locate_note_url(
     scroll_count = 0
     early_stop_due_to_date = False
 
+    debug_dumped = False
+
     for scroll_index in range(max_scrolls + 1):
         elapsed = time.time() - start_time
         if elapsed > per_item_timeout_sec:
-            print(f"  - [定位流程] 已超时 ({elapsed:.1f}秒 > {per_item_timeout_sec}秒)，停止查找 (已滚动{scroll_count}次)", flush=True)
+            log(f"  - [定位流程] 已超时 ({elapsed:.1f}秒 > {per_item_timeout_sec}秒)，停止查找 (已滚动{scroll_count}次)")
             return ""
+
+        if not debug_dumped:
+            debug_dumped = True
+            try:
+                debug_info = page.evaluate(
+                    """
+                    () => {
+                        const normalize = (value) => String(value || '')
+                            .trim()
+                            .toLowerCase()
+                            .replace(/[\\s\\u200b\\u200c\\u200d\\ufeff]+/g, '');
+                        const anchors = Array.from(document.querySelectorAll(
+                            'a[href*="/explore/"], a[href*="/user/profile/"]'
+                        ));
+                        const visible = anchors.filter(a => {
+                            const rect = a.getBoundingClientRect();
+                            return rect.width > 0 && rect.height > 0;
+                        });
+                        const items = visible.slice(0, 20).map(a => {
+                            const href = a.getAttribute('href') || a.href || '';
+                            const text = (a.innerText || a.textContent || '').trim().substring(0, 60);
+                            const rect = a.getBoundingClientRect();
+                            let parentText = '';
+                            let p = a.parentElement;
+                            for (let i = 0; p && i < 5; i++) {
+                                parentText = (p.innerText || p.textContent || '').trim().substring(0, 80);
+                                if (parentText.length > text.length) break;
+                                p = p.parentElement;
+                            }
+                            return {
+                                href: href.substring(0, 100),
+                                text,
+                                parentText: parentText.substring(0, 80),
+                                normalizedText: normalize(text).substring(0, 60),
+                                w: Math.round(rect.width),
+                                h: Math.round(rect.height),
+                            };
+                        });
+                        return { totalAnchors: anchors.length, visibleAnchors: visible.length, items };
+                    }
+                    """
+                )
+                if debug_info:
+                    log(f"  - [调试] 页面锚点: 总计={debug_info.get('totalAnchors',0)} 可见={debug_info.get('visibleAnchors',0)}")
+                    for i, item in enumerate(debug_info.get("items", [])):
+                        log(f"  - [调试] 卡片{i}: text='{item.get('text','')}' normalized='{item.get('normalizedText','')}' href='{item.get('href','')}' 尺寸={item.get('w',0)}x{item.get('h',0)}")
+            except Exception as exc:
+                log(f"  - [调试] 获取页面卡片信息失败: {exc}")
 
         candidate = find_note_candidate(page, title)
         if candidate and candidate.get("href"):
-            print(f"  - [定位流程] 滚动第{scroll_index}次: 找到候选 score={candidate.get('score', 0)} href={normalize_note_url(candidate['href'])[:80]}", flush=True)
+            log(f"  - [定位流程] 滚动第{scroll_index}次: 找到候选 score={candidate.get('score', 0)} href={normalize_note_url(candidate['href'])[:80]}")
             href = normalize_note_url(candidate["href"])
             note_id = extract_note_id(href)
-            if is_clickable_candidate_link(href):
-                print(f"  - [定位流程] 找到匹配卡片，准备点击: {href} noteId={note_id}", flush=True)
+            if not note_id and not is_clickable_candidate_link(href):
+                log(f"  - [定位流程] 候选链接无效(无noteId且非可点击卡片): href={href[:100]}，可能页面未登录或被风控")
+            elif is_clickable_candidate_link(href):
+                log(f"  - [定位流程] 找到匹配卡片，准备点击: {href} noteId={note_id}")
                 clicked = False
                 try:
                     clicked = click_note_candidate(page, candidate)
                 except Exception as exc:
-                    print(f"  - [定位流程] 坐标点击失败，尝试链接点击: {exc}", flush=True)
+                    log(f"  - [定位流程] 坐标点击失败，尝试链接点击: {exc}")
                     try:
                         clicked = click_note_by_href(page, href)
                     except Exception as exc2:
-                        print(f"  - [定位流程] 链接点击也失败: {exc2}", flush=True)
+                        log(f"  - [定位流程] 链接点击也失败: {exc2}")
                         clicked = False
 
                 if clicked:
@@ -798,23 +922,45 @@ def locate_note_url(
                         require_xsec_token=require_xsec_token,
                     )
                     if resolved_url:
-                        print(f"  - [定位流程] 成功获取地址: {resolved_url}", flush=True)
+                        log(f"  - [定位流程] 成功获取地址: {resolved_url}")
                         return resolved_url
                     if is_valid_address_bar_note_url(href, require_xsec_token=require_xsec_token):
-                        print(f"  - [定位流程] 地址栏未变化，使用卡片链接: {href}", flush=True)
+                        log(f"  - [定位流程] 地址栏未变化，使用卡片链接: {href}")
                         return href
                     current_page_url = normalize_note_url(page.url)
                     has_note_id = bool(extract_note_id(current_page_url))
-                    print(f"  - [定位流程] 点击后未拿到xsec_token地址: 当前URL={current_page_url[:100]} 是否含笔记ID={has_note_id} 卡片href={href[:80]}", flush=True)
+                    log(f"  - [定位流程] 点击后未拿到xsec_token地址: 当前URL={current_page_url[:100]} 是否含笔记ID={has_note_id} 卡片href={href[:80]}")
                     return ""
-                print(f"  - [定位流程] 找到卡片但点击失败: href={normalize_note_url(candidate.get('href', ''))[:80]}", flush=True)
+                log(f"  - [定位流程] 找到卡片但点击失败: href={normalize_note_url(candidate.get('href', ''))[:80]}")
                 return ""
-            print(f"  - [定位流程] 忽略无效候选地址(非可点击链接): {href[:80]}", flush=True)
+            log(f"  - [定位流程] 忽略无效候选地址(非可点击链接): {href[:80]}")
         elif candidate:
-            print(f"  - [定位流程] 滚动第{scroll_index}次: 找到候选但无有效href score={candidate.get('score', 0)} text={str(candidate.get('text', ''))[:30]}", flush=True)
+            log(f"  - [定位流程] 滚动第{scroll_index}次: 找到候选但无有效href score={candidate.get('score', 0)} text={str(candidate.get('text', ''))[:30]}")
         else:
             if scroll_index % 3 == 0:
-                print(f"  - [定位流程] 滚动第{scroll_index}次: 未找到任何候选", flush=True)
+                log(f"  - [定位流程] 滚动第{scroll_index}次: 未找到任何候选")
+                if scroll_index == 0:
+                    try:
+                        diag = page.evaluate("""
+                        () => {
+                            const body = (document.body || {}).innerText || '';
+                            const hasLogin = body.includes('登录') && (body.includes('注册') || body.includes('手机号'));
+                            const allAnchors = document.querySelectorAll('a[href*="/explore/"], a[href*="/user/profile/"]').length;
+                            const validAnchors = Array.from(document.querySelectorAll('a[href*="/explore/"], a[href*="/user/profile/"]')).filter(a => {
+                                const href = a.getAttribute('href') || a.href || '';
+                                const noteId = href.match(/\\/explore\\/([^/?#]+)/)?.[1] || href.match(/\\/user\\/profile\\/[^/?#]+\\/([^/?#]+)/)?.[1] || '';
+                                return noteId && noteId.length >= 8;
+                            }).length;
+                            return { hasLogin, allAnchors, validAnchors, url: location.href };
+                        }
+                        """)
+                        log(f"  - [诊断] 首次未找到候选: 登录提示={diag.get('hasLogin')} 全部锚点={diag.get('allAnchors')} 有效锚点={diag.get('validAnchors')} 当前URL={diag.get('url','')[:80]}", level="debug")
+                        if diag.get("hasLogin"):
+                            log(f"  - [诊断] ⚠️ 页面可能未登录，导致笔记卡片不可见", level="warning")
+                        if diag.get("allAnchors", 0) > 0 and diag.get("validAnchors", 0) == 0:
+                            log(f"  - [诊断] ⚠️ 页面有{diag.get('allAnchors')}个锚点但无有效笔记链接，可能session失效或被风控", level="warning")
+                    except Exception as exc:
+                        log(f"  - [诊断] 获取页面诊断信息失败: {exc}", level="debug")
 
         if target_date and scroll_index > 0 and scroll_index % 2 == 0:
             page_dates = page.evaluate(
@@ -844,7 +990,7 @@ def locate_note_url(
                 if parsed_dates:
                     min_date = min(parsed_dates)
                     if min_date < target_date:
-                        print(f"  - [定位流程] 检测到笔记日期早于目标日期: 最早日期={min_date.strftime('%Y-%m-%d')} < 目标日期={target_date.strftime('%Y-%m-%d')}, 提前停止滚动", flush=True)
+                        log(f"  - [定位流程] 检测到笔记日期早于目标日期: 最早日期={min_date.strftime('%Y-%m-%d')} < 目标日期={target_date.strftime('%Y-%m-%d')}, 提前停止滚动")
                         early_stop_due_to_date = True
                         break
 
@@ -863,7 +1009,7 @@ def locate_note_url(
         if next_height == last_height == current_height:
             no_change_count += 1
             if no_change_count >= max_no_change:
-                print(f"  - [定位流程] 页面已到底部，连续 {no_change_count} 次无变化，提前退出 (已滚动{scroll_count}次, 页面高度={current_height})", flush=True)
+                log(f"  - [定位流程] 页面已到底部，连续 {no_change_count} 次无变化，提前退出 (已滚动{scroll_count}次, 页面高度={current_height})")
                 break
             page.wait_for_timeout(400)
         else:
@@ -872,9 +1018,9 @@ def locate_note_url(
 
     total_elapsed = time.time() - start_time
     if early_stop_due_to_date:
-        print(f"  - [定位流程] 失败(日期早于目标): 滚动{scroll_count}次后未找到匹配卡片, 耗时{total_elapsed:.1f}s, title={title[:40]}", flush=True)
+        log(f"  - [定位流程] 失败(日期早于目标): 滚动{scroll_count}次后未找到匹配卡片, 耗时{total_elapsed:.1f}s, title={title[:40]}")
     else:
-        print(f"  - [定位流程] 失败: 滚动{scroll_count}次后未找到匹配卡片, 耗时{total_elapsed:.1f}s, title={title[:40]}", flush=True)
+        log(f"  - [定位流程] 失败: 滚动{scroll_count}次后未找到匹配卡片, 耗时{total_elapsed:.1f}s, title={title[:40]}")
     return ""
 
 
@@ -919,11 +1065,14 @@ def export_failed_items(failed_items, output_path):
                 })
         return failed_path
     except Exception as exc:
-        print(f"导出失败数据出错: {exc}", flush=True)
+        log(f"导出失败数据出错: {exc}")
         return ""
 
 
 def update_note_urls(args):
+    log_path = getattr(args, 'log_file', '') or None
+    setup_logger(log_path)
+    
     excel_path = os.path.abspath(args.excel_path)
     output_path = os.path.abspath(args.output_path or args.excel_path)
     sheet_name = args.sheet_name
@@ -952,7 +1101,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                 elif len(parts) == 2:
                     target_date = datetime(datetime.now().year, int(parts[0]), int(parts[1]))
         except Exception as e:
-            print(f"警告: 无法解析目标日期 '{args.target_date}': {e}", flush=True)
+            log(f"警告: 无法解析目标日期 '{args.target_date}': {e}")
     
     with open(csv_path, "r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
@@ -966,7 +1115,7 @@ def update_note_urls_csv(args, csv_path, output_path):
     if args.limit:
         all_row_indices = all_row_indices[: args.limit]
     if not all_row_indices:
-        print("没有需要处理的行。", flush=True)
+        log("没有需要处理的行。")
         return output_path
 
     row_indices = all_row_indices
@@ -977,7 +1126,7 @@ def update_note_urls_csv(args, csv_path, output_path):
         row_indices = all_row_indices[start_idx:end_idx]
         actual_start_row = row_indices[0] if row_indices else 0
         actual_end_row = row_indices[-1] if row_indices else 0
-        print(f"并行模式: 任务 {args.parallel_index + 1}/{args.parallel_total}，处理行 {actual_start_row}-{actual_end_row}", flush=True)
+        log(f"并行模式: 任务 {args.parallel_index + 1}/{args.parallel_total}，处理行 {actual_start_row}-{actual_end_row}")
 
     items = []
     for row_idx in row_indices:
@@ -992,7 +1141,7 @@ def update_note_urls_csv(args, csv_path, output_path):
     if os.path.abspath(csv_path) == os.path.abspath(output_path):
         backup_path = make_backup(csv_path)
         if backup_path:
-            print(f"已备份原文件: {backup_path}", flush=True)
+            log(f"已备份原文件: {backup_path}")
 
     user_data_dir = args.user_data_dir
     if args.parallel_session:
@@ -1012,12 +1161,12 @@ def update_note_urls_csv(args, csv_path, output_path):
     if not session_dirs:
         session_dirs = [user_data_dir]
     
-    print(f"CSV: {csv_path}", flush=True)
-    print(f"输出: {output_path}", flush=True)
-    print(f"处理行数: {len(items)}", flush=True)
-    print(f"使用 {len(session_dirs)} 个账号轮询:", flush=True)
+    log(f"CSV: {csv_path}")
+    log(f"输出: {output_path}")
+    log(f"处理行数: {len(items)}")
+    log(f"使用 {len(session_dirs)} 个账号轮询:")
     for i, sd in enumerate(session_dirs):
-        print(f"  账号{i+1}: {sd}", flush=True)
+        log(f"  账号{i+1}: {sd}")
 
     updated = 0
     skipped = 0
@@ -1032,12 +1181,12 @@ def update_note_urls_csv(args, csv_path, output_path):
         current_session_idx = 0
         
         if session_mode == "bind":
-            print(f"\n[绑定模式] 同时打开 {len(session_dirs)} 个浏览器窗口...", flush=True)
+            log(f"\n[绑定模式] 同时打开 {len(session_dirs)} 个浏览器窗口...")
         else:
-            print(f"\n[轮询模式] 同时打开 {len(session_dirs)} 个浏览器窗口...", flush=True)
+            log(f"\n[轮询模式] 同时打开 {len(session_dirs)} 个浏览器窗口...")
         
         for i, session_dir in enumerate(session_dirs):
-            print(f"  - 启动账号{i+1}的浏览器...", flush=True)
+            log(f"  - 启动账号{i+1}的浏览器...")
             context = p.chromium.launch_persistent_context(
                 user_data_dir=session_dir,
                 headless=args.headless,
@@ -1060,7 +1209,7 @@ def update_note_urls_csv(args, csv_path, output_path):
             contexts.append(context)
             pages.append(page)
         
-        print(f"所有 {len(session_dirs)} 个浏览器窗口已就绪\n", flush=True)
+        log(f"所有 {len(session_dirs)} 个浏览器窗口已就绪\n")
         
         def get_current_page():
             return pages[current_session_idx % len(pages)]
@@ -1077,11 +1226,11 @@ def update_note_urls_csv(args, csv_path, output_path):
                     expected_session_idx = (index - 1) % len(session_dirs)
                     if expected_session_idx != current_session_idx:
                         current_session_idx = expected_session_idx
-                        print(f"  - [切换账号] → 账号{current_session_idx + 1}", flush=True)
+                        log(f"  - [切换账号] → 账号{current_session_idx + 1}")
 
                 page = get_current_page()
-                print(f"\n[{index}/{len(items)}] 第 {row_idx} 行: {title}", flush=True)
-                print(f"  - 使用账号{current_session_idx + 1}", flush=True)
+                log(f"\n[{index}/{len(items)}] 第 {row_idx} 行: {title}")
+                log(f"  - 使用账号{current_session_idx + 1}")
                 
                 if index > 1:
                     random_delay(800, 2000)
@@ -1089,7 +1238,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                 batch_size = getattr(args, 'batch_size', 0)
                 batch_interval = getattr(args, 'batch_interval', 30)
                 if batch_size > 0 and index > 1 and (index - 1) % batch_size == 0:
-                    print(f"  - [批次休息] 已处理 {index - 1} 条，休息 {batch_interval} 秒避免风控...", flush=True)
+                    log(f"  - [批次休息] 已处理 {index - 1} 条，休息 {batch_interval} 秒避免风控...")
                     time.sleep(batch_interval)
                 
                 check_verification_popup(page)
@@ -1103,16 +1252,16 @@ def update_note_urls_csv(args, csv_path, output_path):
                         "old_url": old_url,
                         "reason": "笔记无标题(不可恢复)",
                     })
-                    print("  - 跳过：笔记无标题，无法匹配", flush=True)
+                    log("  - 跳过：笔记无标题，无法匹配")
                     continue
                 
                 if not title or not homepage_url:
                     skipped += 1
-                    print("  - 跳过：标题或主页链接为空", flush=True)
+                    log("  - 跳过：标题或主页链接为空")
                     continue
                 if args.only_empty and not is_blank(old_url):
                     skipped += 1
-                    print("  - 跳过：笔记官方地址已有内容", flush=True)
+                    log("  - 跳过：笔记官方地址已有内容")
                     continue
 
                 try:
@@ -1137,7 +1286,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                         "old_url": old_url,
                         "reason": f"查找超时: {exc}",
                     })
-                    print(f"  - 查找超时: {exc}", flush=True)
+                    log(f"  - 查找超时: {exc}")
                     continue
                 except Exception as exc:
                     note_url = ""
@@ -1149,7 +1298,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                         "old_url": old_url,
                         "reason": f"查找失败: {exc}",
                     })
-                    print(f"  - 查找失败: {exc}", flush=True)
+                    log(f"  - 查找失败: {exc}")
                     continue
 
                 if not note_url:
@@ -1162,7 +1311,8 @@ def update_note_urls_csv(args, csv_path, output_path):
                         "old_url": old_url,
                         "reason": f"未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}, 原地址={old_url[:80]})",
                     })
-                    print(f"  - 未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}), 保持原值", flush=True)
+                    log(f"  - 未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}), 保持原值")
+                    log(f"  - [结果汇总] 行{row_idx} 失败(未找到匹配) | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
                     continue
 
                 new_note_id = extract_note_id(note_url)
@@ -1175,7 +1325,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                         "old_url": old_url,
                         "reason": f"地址没有笔记ID: {note_url}",
                     })
-                    print(f"  - 找到的地址没有笔记ID，保持原值: {note_url}", flush=True)
+                    log(f"  - 找到的地址没有笔记ID，保持原值: {note_url}")
                     continue
 
                 rows_data[row_idx - 2][NOTE_URL_HEADER] = note_url
@@ -1183,15 +1333,16 @@ def update_note_urls_csv(args, csv_path, output_path):
                 id_note = ""
                 if old_note_id and new_note_id and old_note_id != new_note_id:
                     id_note = f"（注意：笔记ID从 {old_note_id} 变为 {new_note_id}）"
-                print(f"  - 已更新: {note_url} {id_note}", flush=True)
+                log(f"  - 已更新: {note_url} {id_note}")
+                log(f"  - [结果汇总] 行{row_idx} 成功 | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
 
                 if args.save_every and updated % args.save_every == 0:
                     save_csv(rows_data, output_path, list(headers.keys()), original_csv_path=csv_path)
-                    print(f"  - 已保存进度: {output_path}", flush=True)
+                    log(f"  - 已保存进度: {output_path}")
         except KeyboardInterrupt:
-            print("\n\n用户中断，正在保存已处理数据...", flush=True)
+            log("\n\n用户中断，正在保存已处理数据...")
             save_csv(rows_data, output_path, list(headers.keys()), original_csv_path=csv_path)
-            print(f"已保存 {updated} 条更新到: {output_path}", flush=True)
+            log(f"已保存 {updated} 条更新到: {output_path}")
             raise
         finally:
             for ctx in contexts:
@@ -1201,24 +1352,24 @@ def update_note_urls_csv(args, csv_path, output_path):
                     pass
 
     save_csv(rows_data, output_path, list(headers.keys()), original_csv_path=csv_path)
-    print("\n处理完成。", flush=True)
-    print(f"更新: {updated}，跳过: {skipped}，失败: {failed}", flush=True)
-    print(f"结果文件: {output_path}", flush=True)
+    log("\n处理完成。")
+    log(f"更新: {updated}，跳过: {skipped}，失败: {failed}")
+    log(f"结果文件: {output_path}")
 
     if failed_items:
-        print("\n" + "=" * 60, flush=True)
-        print("失败数据明细：", flush=True)
-        print("=" * 60, flush=True)
+        log("\n" + "=" * 60)
+        log("失败数据明细：")
+        log("=" * 60)
         for item in failed_items:
-            print(f"\n行号: {item['row']}", flush=True)
-            print(f"  标题: {item['title']}", flush=True)
-            print(f"  主页: {item['homepage_url']}", flush=True)
-            print(f"  原地址: {item['old_url']}", flush=True)
-            print(f"  失败原因: {item['reason']}", flush=True)
+            log(f"\n行号: {item['row']}")
+            log(f"  标题: {item['title']}")
+            log(f"  主页: {item['homepage_url']}")
+            log(f"  原地址: {item['old_url']}")
+            log(f"  失败原因: {item['reason']}")
 
         failed_path = export_failed_items(failed_items, output_path)
         if failed_path:
-            print(f"\n失败数据已导出到: {failed_path}", flush=True)
+            log(f"\n失败数据已导出到: {failed_path}")
 
     return output_path
 
@@ -1280,7 +1431,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                 elif len(parts) == 2:
                     target_date = datetime(datetime.now().year, int(parts[0]), int(parts[1]))
         except Exception as e:
-            print(f"警告: 无法解析目标日期 '{args.target_date}': {e}", flush=True)
+            log(f"警告: 无法解析目标日期 '{args.target_date}': {e}")
     
     wb = load_workbook(excel_path)
     if sheet_name not in wb.sheetnames:
@@ -1293,7 +1444,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
     if args.limit:
         rows = rows[: args.limit]
     if not rows:
-        print("没有需要处理的行。", flush=True)
+        log("没有需要处理的行。")
         return output_path
 
     if args.parallel_index >= 0 and args.parallel_total > 1:
@@ -1301,7 +1452,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
         start_idx = args.parallel_index * chunk_size
         end_idx = min(start_idx + chunk_size, len(rows))
         rows = rows[start_idx:end_idx]
-        print(f"并行模式: 任务 {args.parallel_index + 1}/{args.parallel_total}，处理行 {start_idx + 1}-{end_idx}", flush=True)
+        log(f"并行模式: 任务 {args.parallel_index + 1}/{args.parallel_total}，处理行 {start_idx + 1}-{end_idx}")
 
     items = build_rows(ws, headers, rows)
     url_col = headers[NOTE_URL_HEADER]
@@ -1309,7 +1460,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
     if os.path.abspath(excel_path) == os.path.abspath(output_path):
         backup_path = make_backup(excel_path)
         if backup_path:
-            print(f"已备份原文件: {backup_path}", flush=True)
+            log(f"已备份原文件: {backup_path}")
 
     user_data_dir = args.user_data_dir
     if args.parallel_session:
@@ -1329,13 +1480,13 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
     if not session_dirs:
         session_dirs = [user_data_dir]
     
-    print(f"Excel: {excel_path}", flush=True)
-    print(f"Sheet: {sheet_name}", flush=True)
-    print(f"输出: {output_path}", flush=True)
-    print(f"处理行数: {len(items)}", flush=True)
-    print(f"使用 {len(session_dirs)} 个账号轮询:", flush=True)
+    log(f"Excel: {excel_path}")
+    log(f"Sheet: {sheet_name}")
+    log(f"输出: {output_path}")
+    log(f"处理行数: {len(items)}")
+    log(f"使用 {len(session_dirs)} 个账号轮询:")
     for i, sd in enumerate(session_dirs):
-        print(f"  账号{i+1}: {sd}", flush=True)
+        log(f"  账号{i+1}: {sd}")
 
     updated = 0
     skipped = 0
@@ -1348,9 +1499,9 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
         pages = []
         current_session_idx = 0
         
-        print(f"\n同时打开 {len(session_dirs)} 个浏览器窗口...", flush=True)
+        log(f"\n同时打开 {len(session_dirs)} 个浏览器窗口...")
         for i, session_dir in enumerate(session_dirs):
-            print(f"  - 启动账号{i+1}的浏览器...", flush=True)
+            log(f"  - 启动账号{i+1}的浏览器...")
             context = p.chromium.launch_persistent_context(
                 user_data_dir=session_dir,
                 headless=args.headless,
@@ -1373,7 +1524,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
             contexts.append(context)
             pages.append(page)
         
-        print(f"所有 {len(session_dirs)} 个浏览器窗口已就绪\n", flush=True)
+        log(f"所有 {len(session_dirs)} 个浏览器窗口已就绪\n")
         
         def get_current_page():
             return pages[current_session_idx % len(pages)]
@@ -1390,11 +1541,11 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     expected_session_idx = (index - 1) % len(session_dirs)
                     if expected_session_idx != current_session_idx:
                         current_session_idx = expected_session_idx
-                        print(f"  - [切换账号] → 账号{current_session_idx + 1}", flush=True)
+                        log(f"  - [切换账号] → 账号{current_session_idx + 1}")
 
                 page = get_current_page()
-                print(f"\n[{index}/{len(items)}] 第 {row_idx} 行: {title}", flush=True)
-                print(f"  - 使用账号{current_session_idx + 1}", flush=True)
+                log(f"\n[{index}/{len(items)}] 第 {row_idx} 行: {title}")
+                log(f"  - 使用账号{current_session_idx + 1}")
                 
                 if index > 1:
                     random_delay(800, 2000)
@@ -1402,7 +1553,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                 batch_size = getattr(args, 'batch_size', 0)
                 batch_interval = getattr(args, 'batch_interval', 30)
                 if batch_size > 0 and index > 1 and (index - 1) % batch_size == 0:
-                    print(f"  - [批次休息] 已处理 {index - 1} 条，休息 {batch_interval} 秒避免风控...", flush=True)
+                    log(f"  - [批次休息] 已处理 {index - 1} 条，休息 {batch_interval} 秒避免风控...")
                     time.sleep(batch_interval)
                 
                 check_verification_popup(page)
@@ -1416,16 +1567,16 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         "old_url": old_url,
                         "reason": "笔记无标题(不可恢复)",
                     })
-                    print("  - 跳过：笔记无标题，无法匹配", flush=True)
+                    log("  - 跳过：笔记无标题，无法匹配")
                     continue
                 
                 if not title or not homepage_url:
                     skipped += 1
-                    print("  - 跳过：标题或主页链接为空", flush=True)
+                    log("  - 跳过：标题或主页链接为空")
                     continue
                 if args.only_empty and not is_blank(old_url):
                     skipped += 1
-                    print("  - 跳过：笔记官方地址已有内容", flush=True)
+                    log("  - 跳过：笔记官方地址已有内容")
                     continue
 
                 try:
@@ -1450,7 +1601,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         "old_url": old_url,
                         "reason": f"查找超时: {exc}",
                     })
-                    print(f"  - 查找超时: {exc}", flush=True)
+                    log(f"  - 查找超时: {exc}")
                     continue
                 except Exception as exc:
                     note_url = ""
@@ -1462,7 +1613,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         "old_url": old_url,
                         "reason": f"查找失败: {exc}",
                     })
-                    print(f"  - 查找失败: {exc}", flush=True)
+                    log(f"  - 查找失败: {exc}")
                     continue
 
                 if not note_url:
@@ -1475,7 +1626,8 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         "old_url": old_url,
                         "reason": f"未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}, 原地址={old_url[:80]})",
                     })
-                    print(f"  - 未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}), 保持原值", flush=True)
+                    log(f"  - 未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}), 保持原值")
+                    log(f"  - [结果汇总] 行{row_idx} 失败(未找到匹配) | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
                     continue
 
                 new_note_id = extract_note_id(note_url)
@@ -1488,7 +1640,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         "old_url": old_url,
                         "reason": f"地址没有笔记ID: {note_url}",
                     })
-                    print(f"  - 找到的地址没有笔记ID，保持原值: {note_url}", flush=True)
+                    log(f"  - 找到的地址没有笔记ID，保持原值: {note_url}")
                     continue
 
                 ws.cell(row=row_idx, column=url_col).value = note_url
@@ -1496,15 +1648,16 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                 id_note = ""
                 if old_note_id and new_note_id and old_note_id != new_note_id:
                     id_note = f"（注意：笔记ID从 {old_note_id} 变为 {new_note_id}）"
-                print(f"  - 已更新: {note_url} {id_note}", flush=True)
+                log(f"  - 已更新: {note_url} {id_note}")
+                log(f"  - [结果汇总] 行{row_idx} 成功 | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
 
                 if args.save_every and updated % args.save_every == 0:
                     actual_output_path = save_workbook(wb, actual_output_path)
-                    print(f"  - 已保存进度: {actual_output_path}", flush=True)
+                    log(f"  - 已保存进度: {actual_output_path}")
         except KeyboardInterrupt:
-            print("\n\n用户中断，正在保存已处理数据...", flush=True)
+            log("\n\n用户中断，正在保存已处理数据...")
             actual_output_path = save_workbook(wb, actual_output_path)
-            print(f"已保存 {updated} 条更新到: {actual_output_path}", flush=True)
+            log(f"已保存 {updated} 条更新到: {actual_output_path}")
             raise
         finally:
             for ctx in contexts:
@@ -1514,24 +1667,24 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     pass
 
     actual_output_path = save_workbook(wb, actual_output_path)
-    print("\n处理完成。", flush=True)
-    print(f"更新: {updated}，跳过: {skipped}，失败: {failed}", flush=True)
-    print(f"结果文件: {actual_output_path}", flush=True)
+    log("\n处理完成。")
+    log(f"更新: {updated}，跳过: {skipped}，失败: {failed}")
+    log(f"结果文件: {actual_output_path}")
 
     if failed_items:
-        print("\n" + "=" * 60, flush=True)
-        print("失败数据明细：", flush=True)
-        print("=" * 60, flush=True)
+        log("\n" + "=" * 60)
+        log("失败数据明细：")
+        log("=" * 60)
         for item in failed_items:
-            print(f"\n行号: {item['row']}", flush=True)
-            print(f"  标题: {item['title']}", flush=True)
-            print(f"  主页: {item['homepage_url']}", flush=True)
-            print(f"  原地址: {item['old_url']}", flush=True)
-            print(f"  失败原因: {item['reason']}", flush=True)
+            log(f"\n行号: {item['row']}")
+            log(f"  标题: {item['title']}")
+            log(f"  主页: {item['homepage_url']}")
+            log(f"  原地址: {item['old_url']}")
+            log(f"  失败原因: {item['reason']}")
 
         failed_path = export_failed_items(failed_items, actual_output_path)
         if failed_path:
-            print(f"\n失败数据已导出到: {failed_path}", flush=True)
+            log(f"\n失败数据已导出到: {failed_path}")
 
     return actual_output_path
 
@@ -1566,6 +1719,7 @@ def build_arg_parser():
     parser.add_argument("--batch-interval", type=int, default=30, help="批次休息秒数，默认30")
     parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，用于每条数据轮询账号")
     parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=所有任务共享所有账号, bind=每个任务使用分配到的账号组")
+    parser.add_argument("--log-file", default="", help="日志文件路径，默认自动生成到 logs/ 目录")
     return parser
 
 
@@ -1575,10 +1729,10 @@ def main():
     try:
         update_note_urls(args)
     except KeyboardInterrupt:
-        print("\n用户中断。", flush=True)
+        log("\n用户中断。")
         raise SystemExit(130)
     except Exception as exc:
-        print(f"错误: {exc}", flush=True)
+        log(f"错误: {exc}")
         raise SystemExit(1)
 
 
