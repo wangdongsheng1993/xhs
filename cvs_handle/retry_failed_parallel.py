@@ -428,10 +428,8 @@ def main():
         if target_date:
             command.extend(["--target-date", target_date.strftime("%Y-%m-%d")])
         
-        if args.batch_size:
-            command.extend(["--batch-size", str(args.batch_size)])
-        if args.batch_interval:
-            command.extend(["--batch-interval", str(args.batch_interval)])
+        command.extend(["--batch-size", str(args.batch_size)])
+        command.extend(["--batch-interval", str(args.batch_interval)])
         
         if args.sessions:
             command.extend(["--sessions", args.sessions])

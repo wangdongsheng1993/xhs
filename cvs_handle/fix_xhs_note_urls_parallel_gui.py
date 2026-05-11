@@ -3,6 +3,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import filedialog, messagebox, ttk
@@ -50,28 +51,32 @@ class ParallelNoteUrlFixerApp:
         self.process = None
         self.worker_thread = None
         self.log_queue = queue.Queue()
+        self.task_started_at = None
+        self.task_started_label = ""
+        self.task_name = ""
+        self.runtime_var = tk.StringVar(value="本次任务耗时: --:--:--")
 
         self.excel_path_var = tk.StringVar(value=DEFAULT_EXCEL_PATH)
         self.output_path_var = tk.StringVar(value=DEFAULT_EXCEL_PATH)
         self.sheet_var = tk.StringVar(value="小红书笔记列表")
         self.rows_var = tk.StringVar()
         self.workers_var = tk.StringVar(value="1")
-        self.per_item_timeout_var = tk.StringVar(value="20")
+        self.per_item_timeout_var = tk.StringVar(value="30")
         self.max_scrolls_var = tk.StringVar(value="15")
         self.login_wait_var = tk.StringVar(value="50")
         self.only_empty_var = tk.BooleanVar(value=False)
         self.headless_var = tk.BooleanVar(value=False)
         self.skip_no_title_var = tk.BooleanVar(value=True)
         self.target_date_var = tk.StringVar(value=DEFAULT_TARGET_DATE)
-        self.batch_size_var = tk.StringVar(value="30")
-        self.batch_interval_var = tk.StringVar(value="30")
+        self.batch_size_var = tk.StringVar(value="15")
+        self.batch_interval_var = tk.StringVar(value="60")
         self.sessions_var = tk.StringVar(value="")
         self.session_mode_var = tk.StringVar(value="rotate")
 
         self.retry_csv_var = tk.StringVar()
         self.retry_failed_var = tk.StringVar()
         self.retry_workers_var = tk.StringVar(value="1")
-        self.retry_per_item_timeout_var = tk.StringVar(value="20")
+        self.retry_per_item_timeout_var = tk.StringVar(value="30")
         self.retry_max_scrolls_var = tk.StringVar(value="15")
         self.retry_login_wait_var = tk.StringVar(value="50")
         self.retry_skip_no_title_var = tk.BooleanVar(value=True)
@@ -166,10 +171,10 @@ class ParallelNoteUrlFixerApp:
         row5.grid(row=7, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
         
         ttk.Label(row5, text="账号模式").grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(row5, text="轮询(所有任务共享所有账号)", variable=self.session_mode_var, value="rotate").grid(row=0, column=1, padx=(6, 0))
+        ttk.Radiobutton(row5, text="轮换(推荐：每个账号连续跑一小段)", variable=self.session_mode_var, value="rotate").grid(row=0, column=1, padx=(6, 0))
         ttk.Radiobutton(row5, text="绑定(每个任务分配账号组)", variable=self.session_mode_var, value="bind").grid(row=0, column=2, padx=(16, 0))
 
-        hint = ttk.Label(settings, text="提示：轮询模式-所有任务共享所有账号；绑定模式-账号平均分配给各任务，任务内轮询。", foreground="gray")
+        hint = ttk.Label(settings, text="提示：轮换模式-账号按批次切换，默认单账号连续处理10-15条后休息60-180秒再切下一个；绑定模式-账号平均分配给各任务。", foreground="gray")
         hint.grid(row=8, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
         retry_frame = ttk.LabelFrame(self.root, text="并行重试失败数据", padding=16)
@@ -226,6 +231,7 @@ class ParallelNoteUrlFixerApp:
         self.run_button.grid(row=0, column=0, sticky="w")
         self.stop_button = ttk.Button(actions, text="停止", command=self._stop_run, state="disabled")
         self.stop_button.grid(row=0, column=1, sticky="w", padx=(12, 0))
+        ttk.Label(actions, textvariable=self.runtime_var, foreground="gray").grid(row=0, column=2, sticky="w", padx=(16, 0))
         ttk.Button(actions, text="打开文件夹", command=self._open_folder).grid(row=0, column=3, sticky="e")
 
         log_frame = ttk.LabelFrame(self.root, text="运行日志", padding=16)
@@ -463,6 +469,7 @@ class ParallelNoteUrlFixerApp:
         self._clear_log()
         self._append_log("命令：\n")
         self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
+        self._begin_task_timer("并行处理")
         self._set_running(True)
 
         env = os.environ.copy()
@@ -489,6 +496,7 @@ class ParallelNoteUrlFixerApp:
         self._clear_log()
         self._append_log("并行重试失败数据命令：\n")
         self._append_log(" ".join(f'"{part}"' if " " in part else part for part in command) + "\n\n")
+        self._begin_task_timer("并行重试")
         self._set_running(True)
 
         env = os.environ.copy()
@@ -550,6 +558,30 @@ class ParallelNoteUrlFixerApp:
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
 
+    def _format_elapsed(self, elapsed_seconds):
+        total_seconds = max(0, int(elapsed_seconds))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+    def _begin_task_timer(self, task_name):
+        self.task_name = task_name
+        self.task_started_at = time.time()
+        self.task_started_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.runtime_var.set("本次任务耗时: 00:00:00")
+        self._append_log(f"开始时间: {self.task_started_label}\n")
+
+    def _finish_task_timer(self):
+        if not self.task_started_at:
+            self.runtime_var.set("本次任务耗时: --:--:--")
+            return "", ""
+
+        end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        elapsed_text = self._format_elapsed(time.time() - self.task_started_at)
+        self.runtime_var.set(f"本次任务耗时: {elapsed_text}")
+        self.task_started_at = None
+        return end_time, elapsed_text
+
     def _drain_log_queue(self):
         while True:
             try:
@@ -561,17 +593,24 @@ class ParallelNoteUrlFixerApp:
                 self._append_log(payload)
             elif event_type == "done":
                 self._set_running(False)
+                end_time, elapsed_text = self._finish_task_timer()
                 if payload == 0:
-                    self._append_log("\n运行完成。\n")
-                    messagebox.showinfo("完成", "处理完成。")
+                    self._append_log(f"\n结束时间: {end_time}\n总耗时: {elapsed_text}\n运行完成。\n")
+                    messagebox.showinfo("完成", f"{self.task_name or '任务'}完成。\n总耗时：{elapsed_text}")
                 else:
-                    self._append_log(f"\n运行失败，退出码：{payload}\n")
-                    messagebox.showerror("失败", f"运行失败，退出码：{payload}")
+                    self._append_log(f"\n结束时间: {end_time}\n总耗时: {elapsed_text}\n运行失败，退出码：{payload}\n")
+                    messagebox.showerror("失败", f"{self.task_name or '任务'}失败，退出码：{payload}\n总耗时：{elapsed_text}")
+                self.task_name = ""
             elif event_type == "error":
                 self._set_running(False)
+                self._finish_task_timer()
                 self._append_log(f"\n启动失败：{payload}\n")
                 messagebox.showerror("启动失败", payload)
+                self.task_name = ""
 
+        if self.task_started_at:
+            elapsed_text = self._format_elapsed(time.time() - self.task_started_at)
+            self.runtime_var.set(f"本次任务耗时: {elapsed_text}")
         self.root.after(150, self._drain_log_queue)
 
     def _open_folder(self):

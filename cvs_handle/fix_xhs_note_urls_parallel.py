@@ -298,7 +298,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=30, help="每处理多少条后休息一次，0表示不休息，默认30")
     parser.add_argument("--batch-interval", type=int, default=30, help="批次休息秒数，默认30")
     parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，如 session1,session2,session3")
-    parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=所有任务共享所有账号, bind=每个任务使用分配到的账号组")
+    parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=任务内按批次轮换账号(推荐), bind=每个任务使用分配到的账号组")
     args = parser.parse_args()
 
     excel_path = os.path.abspath(args.excel_path)
@@ -357,7 +357,7 @@ def main():
     if session_mode == "bind":
         print(f"\n[绑定模式] 每个任务绑定一个账号", flush=True)
     else:
-        print(f"\n[轮询模式] 每条数据轮询使用 {len(session_dirs)} 个账号", flush=True)
+        print(f"\n[轮换模式] 每个任务内按批次轮换使用 {len(session_dirs)} 个账号", flush=True)
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"

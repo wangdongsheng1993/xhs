@@ -67,6 +67,74 @@ TITLE_HEADER = "笔记标题"
 HOMEPAGE_HEADER = "主页链接"
 NOTE_URL_HEADER = "笔记官方地址"
 
+ANTI_DETECTION_CONFIG = {
+    "min_delay_ms": 1500,
+    "max_delay_ms": 4000,
+    "scroll_delay_min_ms": 800,
+    "scroll_delay_max_ms": 2000,
+    "batch_interval_default": 60,
+    "batch_size_default": 15,
+    "mouse_move_steps": 10,
+    "random_scroll_pixels": True,
+    "simulate_human_typing": True,
+    "viewport_variance": True,
+    "viewport_width_base": 1440,
+    "viewport_height_base": 1000,
+    "viewport_width_jitter": 90,
+    "viewport_height_jitter": 70,
+    "page_warmup_points_min": 2,
+    "page_warmup_points_max": 4,
+    "page_warmup_pause_min_ms": 300,
+    "page_warmup_pause_max_ms": 900,
+    "page_warmup_dwell_min_ms": 700,
+    "page_warmup_dwell_max_ms": 1800,
+    "verification_hit_suppression_sec": 15,
+    "verification_cooldown_threshold": 2,
+    "verification_cooldown_min_sec": 75,
+    "verification_cooldown_max_sec": 135,
+    "verification_cooldown_gap_sec": 180,
+    "between_item_delay_min_ms": 900,
+    "between_item_delay_max_ms": 2600,
+    "micro_rest_every_min": 4,
+    "micro_rest_every_max": 7,
+    "micro_rest_min_sec": 8,
+    "micro_rest_max_sec": 18,
+    "failure_cooldown_threshold": 3,
+    "failure_cooldown_min_sec": 45,
+    "failure_cooldown_max_sec": 95,
+    "failure_cooldown_gap_sec": 180,
+    "session_batch_min": 10,
+    "session_batch_max": 15,
+    "session_switch_rest_min_sec": 60,
+    "session_switch_rest_max_sec": 180,
+    "mouse_pre_hover_probability": 0.45,
+    "mouse_hover_pause_min_ms": 120,
+    "mouse_hover_pause_max_ms": 420,
+    "light_warmup_probability": 0.75,
+    "light_warmup_points_min": 1,
+    "light_warmup_points_max": 2,
+    "light_warmup_pause_min_ms": 120,
+    "light_warmup_pause_max_ms": 420,
+    "light_warmup_dwell_min_ms": 150,
+    "light_warmup_dwell_max_ms": 450,
+}
+
+RISK_CONTROL_STATE = {
+    "consecutive_verification_hits": 0,
+    "last_verification_detected_at": 0.0,
+    "last_cooldown_at": 0.0,
+}
+
+PACE_CONTROL_STATE = {
+    "items_since_micro_rest": 0,
+    "next_micro_rest_after": 0,
+    "consecutive_failures": 0,
+    "last_failure_cooldown_at": 0.0,
+}
+
+MOUSE_TRACK_STATE = {}
+PAGE_VISIT_STATE = {}
+
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -532,7 +600,7 @@ def click_note_candidate(page, candidate):
         and (not viewport_height or candidate["y"] < viewport_height)
     ):
         log(f"  - [点击卡片] 方式1-坐标点击: ({candidate['x']:.0f}, {candidate['y']:.0f}), viewport=({viewport_width}x{viewport_height})")
-        page.mouse.click(float(candidate["x"]), float(candidate["y"]))
+        human_like_click(page, float(candidate["x"]), float(candidate["y"]))
         return True
 
     log(f"  - [点击卡片] 方式1失败(坐标越界或为0: x={candidate.get('x', 0):.0f}, y={candidate.get('y', 0):.0f}, viewport={viewport_width}x{viewport_height}), 尝试方式2-JS查找元素点击")
@@ -594,7 +662,7 @@ def click_note_candidate(page, candidate):
     if point and point.get("x", 0) > 0 and point.get("y", 0) > 0:
         log(f"  - [点击卡片] 方式2-JS定位点击: ({point['x']:.0f}, {point['y']:.0f}), 尺寸={point.get('width', 0):.0f}x{point.get('height', 0):.0f}")
         page.wait_for_timeout(300)
-        page.mouse.click(float(point["x"]), float(point["y"]))
+        human_like_click(page, float(point["x"]), float(point["y"]))
         return True
 
     log(f"  - [点击卡片] 方式2失败(JS未找到有效坐标), 尝试方式3-直接anchor.click()")
@@ -719,8 +787,21 @@ def check_verification_popup(page, max_wait_sec=120):
             """
         )
         if not indicators.get("hasCaptcha") and not indicators.get("hasLoginModal"):
+            if RISK_CONTROL_STATE["consecutive_verification_hits"]:
+                log("  - [风控检测] 页面恢复正常，清空连续风控计数", level="debug")
+            RISK_CONTROL_STATE["consecutive_verification_hits"] = 0
             log(f"  - [风控检测] 无验证弹窗/登录弹窗，页面正常", level="debug")
             return True
+
+        now = time.time()
+        if now - RISK_CONTROL_STATE["last_verification_detected_at"] > ANTI_DETECTION_CONFIG["verification_hit_suppression_sec"]:
+            RISK_CONTROL_STATE["consecutive_verification_hits"] += 1
+            RISK_CONTROL_STATE["last_verification_detected_at"] = now
+        log(
+            f"  - [风控检测] 连续触发计数: {RISK_CONTROL_STATE['consecutive_verification_hits']}",
+            level="debug",
+        )
+        maybe_take_risk_cooldown()
 
         if indicators.get("hasCaptcha"):
             log(f"  - [风控检测] 检测到验证弹窗！请在浏览器中手动完成验证，最多等待 {max_wait_sec} 秒...")
@@ -760,6 +841,7 @@ def check_verification_popup(page, max_wait_sec=120):
                     """
                 )
                 if not recheck.get("hasCaptcha") and not recheck.get("hasLoginModal"):
+                    RISK_CONTROL_STATE["consecutive_verification_hits"] = 0
                     log("  - [风控检测] 验证/登录已完成，继续执行")
                     page.wait_for_timeout(random.randint(1000, 2000))
                     return True
@@ -776,9 +858,322 @@ def check_verification_popup(page, max_wait_sec=120):
         return True
 
 
-def random_delay(min_ms=500, max_ms=2000):
+def random_delay(min_ms=None, max_ms=None):
+    if min_ms is None:
+        min_ms = ANTI_DETECTION_CONFIG["min_delay_ms"]
+    if max_ms is None:
+        max_ms = ANTI_DETECTION_CONFIG["max_delay_ms"]
     delay = random.randint(min_ms, max_ms)
     time.sleep(delay / 1000.0)
+
+
+def reset_pace_state():
+    PACE_CONTROL_STATE["items_since_micro_rest"] = 0
+    PACE_CONTROL_STATE["next_micro_rest_after"] = random.randint(
+        ANTI_DETECTION_CONFIG["micro_rest_every_min"],
+        ANTI_DETECTION_CONFIG["micro_rest_every_max"],
+    )
+    PACE_CONTROL_STATE["consecutive_failures"] = 0
+    PACE_CONTROL_STATE["last_failure_cooldown_at"] = 0.0
+
+
+def apply_between_item_pacing():
+    random_delay(
+        ANTI_DETECTION_CONFIG["between_item_delay_min_ms"],
+        ANTI_DETECTION_CONFIG["between_item_delay_max_ms"],
+    )
+    PACE_CONTROL_STATE["items_since_micro_rest"] += 1
+    threshold = PACE_CONTROL_STATE["next_micro_rest_after"]
+    if threshold <= 0:
+        threshold = random.randint(
+            ANTI_DETECTION_CONFIG["micro_rest_every_min"],
+            ANTI_DETECTION_CONFIG["micro_rest_every_max"],
+        )
+        PACE_CONTROL_STATE["next_micro_rest_after"] = threshold
+
+    if PACE_CONTROL_STATE["items_since_micro_rest"] < threshold:
+        return
+
+    rest_sec = random.randint(
+        ANTI_DETECTION_CONFIG["micro_rest_min_sec"],
+        ANTI_DETECTION_CONFIG["micro_rest_max_sec"],
+    )
+    log(f"  - [节奏控制] 已连续处理 {PACE_CONTROL_STATE['items_since_micro_rest']} 条，短休息 {rest_sec} 秒")
+    time.sleep(rest_sec)
+    PACE_CONTROL_STATE["items_since_micro_rest"] = 0
+    PACE_CONTROL_STATE["next_micro_rest_after"] = random.randint(
+        ANTI_DETECTION_CONFIG["micro_rest_every_min"],
+        ANTI_DETECTION_CONFIG["micro_rest_every_max"],
+    )
+
+
+def register_processing_outcome(success, row_idx=None, reason=""):
+    if success:
+        if PACE_CONTROL_STATE["consecutive_failures"]:
+            log(
+                f"  - [节奏控制] 连续失败计数已清零（此前 {PACE_CONTROL_STATE['consecutive_failures']} 次）",
+                level="debug",
+            )
+        PACE_CONTROL_STATE["consecutive_failures"] = 0
+        return
+
+    PACE_CONTROL_STATE["consecutive_failures"] += 1
+    log(
+        f"  - [节奏控制] 连续失败计数: {PACE_CONTROL_STATE['consecutive_failures']}"
+        + (f"，行{row_idx}" if row_idx else "")
+        + (f"，原因: {reason}" if reason else ""),
+        level="debug",
+    )
+    maybe_take_failure_cooldown()
+
+
+def maybe_take_failure_cooldown():
+    failures = PACE_CONTROL_STATE["consecutive_failures"]
+    if failures < ANTI_DETECTION_CONFIG["failure_cooldown_threshold"]:
+        return
+
+    now = time.time()
+    if now - PACE_CONTROL_STATE["last_failure_cooldown_at"] < ANTI_DETECTION_CONFIG["failure_cooldown_gap_sec"]:
+        return
+
+    cooldown_sec = random.randint(
+        ANTI_DETECTION_CONFIG["failure_cooldown_min_sec"],
+        ANTI_DETECTION_CONFIG["failure_cooldown_max_sec"],
+    )
+    PACE_CONTROL_STATE["last_failure_cooldown_at"] = now
+    log(f"  - [失败保护] 连续失败 {failures} 次，自动冷却 {cooldown_sec} 秒后继续")
+    time.sleep(cooldown_sec)
+
+
+def get_session_rotation_settings(args):
+    batch_min = max(1, int(getattr(args, "session_batch_min", ANTI_DETECTION_CONFIG["session_batch_min"])))
+    batch_max = max(batch_min, int(getattr(args, "session_batch_max", ANTI_DETECTION_CONFIG["session_batch_max"])))
+    rest_min = max(0, int(getattr(args, "session_switch_rest_min", ANTI_DETECTION_CONFIG["session_switch_rest_min_sec"])))
+    rest_max = max(rest_min, int(getattr(args, "session_switch_rest_max", ANTI_DETECTION_CONFIG["session_switch_rest_max_sec"])))
+    return batch_min, batch_max, rest_min, rest_max
+
+
+def draw_session_batch_size(batch_min, batch_max):
+    return random.randint(batch_min, batch_max)
+
+
+def draw_session_switch_rest(rest_min, rest_max):
+    return random.randint(rest_min, rest_max)
+
+
+def get_mouse_position(page):
+    state = MOUSE_TRACK_STATE.get(id(page))
+    if state:
+        return state["x"], state["y"]
+
+    viewport = page.viewport_size or build_human_viewport()
+    width = max(int(viewport.get("width", 0) or 0), 1280)
+    height = max(int(viewport.get("height", 0) or 0), 860)
+    x = random.randint(int(width * 0.35), int(width * 0.65))
+    y = random.randint(int(height * 0.28), int(height * 0.62))
+    MOUSE_TRACK_STATE[id(page)] = {"x": x, "y": y}
+    return x, y
+
+
+def remember_mouse_position(page, x, y):
+    MOUSE_TRACK_STATE[id(page)] = {"x": int(x), "y": int(y)}
+
+
+def clamp_point(page, x, y):
+    viewport = page.viewport_size or build_human_viewport()
+    width = max(int(viewport.get("width", 0) or 0), 1280)
+    height = max(int(viewport.get("height", 0) or 0), 860)
+    safe_x = max(5, min(int(x), width - 5))
+    safe_y = max(5, min(int(y), height - 5))
+    return safe_x, safe_y
+
+
+def move_mouse_naturally(page, target_x, target_y, min_steps=8, max_steps=18):
+    start_x, start_y = get_mouse_position(page)
+    end_x, end_y = clamp_point(page, target_x, target_y)
+    steps = random.randint(min_steps, max_steps)
+
+    for i in range(steps):
+        progress = (i + 1) / steps
+        eased = 1 - (1 - progress) * (1 - progress)
+        jitter_scale = max(1, int((1 - progress) * 7))
+        x = start_x + (end_x - start_x) * eased + random.randint(-jitter_scale, jitter_scale)
+        y = start_y + (end_y - start_y) * eased + random.randint(-jitter_scale, jitter_scale)
+        move_x, move_y = clamp_point(page, x, y)
+        page.mouse.move(move_x, move_y)
+        remember_mouse_position(page, move_x, move_y)
+        time.sleep(random.randint(12, 55) / 1000.0)
+
+    page.mouse.move(end_x, end_y)
+    remember_mouse_position(page, end_x, end_y)
+
+
+def human_like_scroll(page, pixels=None):
+    if pixels is None:
+        pixels = random.randint(300, 800)
+    
+    steps = random.randint(3, 6)
+    pixels_per_step = pixels // steps
+    remainder = pixels % steps
+    
+    for i in range(steps):
+        step_pixels = pixels_per_step + (remainder if i == steps - 1 else 0)
+        page.mouse.wheel(0, step_pixels)
+        delay = random.randint(
+            ANTI_DETECTION_CONFIG["scroll_delay_min_ms"],
+            ANTI_DETECTION_CONFIG["scroll_delay_max_ms"]
+        )
+        time.sleep(delay / 1000.0)
+
+
+def build_human_viewport():
+    width = ANTI_DETECTION_CONFIG["viewport_width_base"]
+    height = ANTI_DETECTION_CONFIG["viewport_height_base"]
+    if ANTI_DETECTION_CONFIG["viewport_variance"]:
+        width += random.randint(
+            -ANTI_DETECTION_CONFIG["viewport_width_jitter"],
+            ANTI_DETECTION_CONFIG["viewport_width_jitter"],
+        )
+        height += random.randint(
+            -ANTI_DETECTION_CONFIG["viewport_height_jitter"],
+            ANTI_DETECTION_CONFIG["viewport_height_jitter"],
+        )
+    return {"width": max(width, 1280), "height": max(height, 860)}
+
+
+def choose_warmup_mode(page, homepage_url):
+    state = PAGE_VISIT_STATE.setdefault(id(page), {})
+    last_homepage = state.get("last_homepage_url", "")
+    mode = "full"
+    if homepage_url and homepage_url == last_homepage:
+        mode = "light" if random.random() < ANTI_DETECTION_CONFIG["light_warmup_probability"] else "skip"
+    state["last_homepage_url"] = homepage_url
+    return mode
+
+
+def warm_up_page(page, mode="full"):
+    viewport = page.viewport_size or build_human_viewport()
+    width = max(int(viewport.get("width", 0) or 0), 1280)
+    height = max(int(viewport.get("height", 0) or 0), 860)
+
+    if mode == "skip":
+        log("  - [反检测] 同主页连续处理，本次跳过页面预热", level="debug")
+        return
+
+    if mode == "light":
+        point_count = random.randint(
+            ANTI_DETECTION_CONFIG["light_warmup_points_min"],
+            ANTI_DETECTION_CONFIG["light_warmup_points_max"],
+        )
+        pause_min = ANTI_DETECTION_CONFIG["light_warmup_pause_min_ms"]
+        pause_max = ANTI_DETECTION_CONFIG["light_warmup_pause_max_ms"]
+        dwell_ms = random.randint(
+            ANTI_DETECTION_CONFIG["light_warmup_dwell_min_ms"],
+            ANTI_DETECTION_CONFIG["light_warmup_dwell_max_ms"],
+        )
+    else:
+        point_count = random.randint(
+            ANTI_DETECTION_CONFIG["page_warmup_points_min"],
+            ANTI_DETECTION_CONFIG["page_warmup_points_max"],
+        )
+        pause_min = ANTI_DETECTION_CONFIG["page_warmup_pause_min_ms"]
+        pause_max = ANTI_DETECTION_CONFIG["page_warmup_pause_max_ms"]
+        dwell_ms = random.randint(
+            ANTI_DETECTION_CONFIG["page_warmup_dwell_min_ms"],
+            ANTI_DETECTION_CONFIG["page_warmup_dwell_max_ms"],
+        )
+
+    for _ in range(point_count):
+        if mode == "light":
+            x = random.randint(int(width * 0.42), int(width * 0.78))
+            y = random.randint(int(height * 0.22), int(height * 0.58))
+        else:
+            x = random.randint(int(width * 0.18), int(width * 0.82))
+            y = random.randint(int(height * 0.18), int(height * 0.72))
+        move_mouse_naturally(page, x, y, min_steps=5 if mode == "light" else 8, max_steps=10 if mode == "light" else 16)
+        time.sleep(random.randint(pause_min, pause_max) / 1000.0)
+
+    page.wait_for_timeout(dwell_ms)
+    log(f"  - [反检测] 页面预热完成: mode={mode} 移动{point_count}次, 停留{dwell_ms}ms", level="debug")
+
+
+def human_like_click(page, x, y):
+    target_x, target_y = clamp_point(page, x, y)
+    if random.random() < ANTI_DETECTION_CONFIG["mouse_pre_hover_probability"]:
+        hover_x, hover_y = clamp_point(
+            page,
+            target_x + random.randint(-22, 22),
+            target_y + random.randint(-16, 16),
+        )
+        move_mouse_naturally(page, hover_x, hover_y)
+        time.sleep(
+            random.randint(
+                ANTI_DETECTION_CONFIG["mouse_hover_pause_min_ms"],
+                ANTI_DETECTION_CONFIG["mouse_hover_pause_max_ms"],
+            )
+            / 1000.0
+        )
+
+    move_mouse_naturally(page, target_x, target_y, min_steps=4, max_steps=max(6, ANTI_DETECTION_CONFIG["mouse_move_steps"]))
+    time.sleep(random.randint(60, 180) / 1000.0)
+    page.mouse.click(target_x, target_y, delay=random.randint(40, 110))
+    remember_mouse_position(page, target_x, target_y)
+
+
+STEALTH_INIT_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+if (!window.chrome) {
+    window.chrome = {};
+}
+if (!window.chrome.runtime) {
+    window.chrome.runtime = {};
+}
+if (navigator.permissions && navigator.permissions.query) {
+    const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = (parameters) => (
+        parameters && parameters.name === 'notifications'
+            ? Promise.resolve({ state: Notification.permission })
+            : originalQuery(parameters)
+    );
+}
+"""
+
+
+def inject_stealth_scripts(context, page=None):
+    try:
+        context.add_init_script(script=STEALTH_INIT_SCRIPT)
+        log("  - [反检测] 已注册启动前隐身脚本", level="debug")
+    except Exception as exc:
+        log(f"  - [反检测] 注册启动前隐身脚本失败: {exc}", level="debug")
+
+    if page is None:
+        return
+
+    try:
+        page.evaluate(f"() => {{ {STEALTH_INIT_SCRIPT} }}")
+        log("  - [反检测] 已补注入当前页面隐身脚本", level="debug")
+    except Exception as exc:
+        log(f"  - [反检测] 补注入当前页面隐身脚本失败: {exc}", level="debug")
+
+
+def maybe_take_risk_cooldown():
+    hits = RISK_CONTROL_STATE["consecutive_verification_hits"]
+    if hits < ANTI_DETECTION_CONFIG["verification_cooldown_threshold"]:
+        return
+
+    now = time.time()
+    if now - RISK_CONTROL_STATE["last_cooldown_at"] < ANTI_DETECTION_CONFIG["verification_cooldown_gap_sec"]:
+        return
+
+    cooldown_sec = random.randint(
+        ANTI_DETECTION_CONFIG["verification_cooldown_min_sec"],
+        ANTI_DETECTION_CONFIG["verification_cooldown_max_sec"],
+    )
+    RISK_CONTROL_STATE["last_cooldown_at"] = now
+    log(f"  - [风控熔断] 连续检测到验证/登录弹窗 {hits} 次，自动休息 {cooldown_sec} 秒")
+    time.sleep(cooldown_sec)
 
 
 def locate_note_url(
@@ -798,6 +1193,8 @@ def locate_note_url(
     start_time = time.time()
     goto_with_retry(page, homepage_url)
     page.wait_for_timeout(random.randint(1500, 2500))
+    warm_up_mode = choose_warmup_mode(page, homepage_url)
+    warm_up_page(page, mode=warm_up_mode)
     
     page_status = page.evaluate("""
     () => {
@@ -999,8 +1396,10 @@ def locate_note_url(
         )
         if scroll_index >= max_scrolls:
             break
-        page.mouse.wheel(0, scroll_pixels)
-        page.wait_for_timeout(random.randint(600, 1200))
+        if ANTI_DETECTION_CONFIG["random_scroll_pixels"]:
+            human_like_scroll(page, random.randint(int(scroll_pixels * 0.6), int(scroll_pixels * 1.4)))
+        else:
+            human_like_scroll(page, scroll_pixels)
         scroll_count += 1
 
         next_height = page.evaluate(
@@ -1172,28 +1571,34 @@ def update_note_urls_csv(args, csv_path, output_path):
     skipped = 0
     failed = 0
     failed_items = []
+    reset_pace_state()
 
     session_mode = getattr(args, 'session_mode', 'rotate')
+    session_batch_min, session_batch_max, session_switch_rest_min, session_switch_rest_max = get_session_rotation_settings(args)
 
     with sync_playwright() as p:
         contexts = []
         pages = []
         current_session_idx = 0
+        current_session_remaining = 0
         
         if session_mode == "bind":
             log(f"\n[绑定模式] 同时打开 {len(session_dirs)} 个浏览器窗口...")
         else:
-            log(f"\n[轮询模式] 同时打开 {len(session_dirs)} 个浏览器窗口...")
+            log(f"\n[轮换模式] 同时打开 {len(session_dirs)} 个浏览器窗口...")
         
         for i, session_dir in enumerate(session_dirs):
             log(f"  - 启动账号{i+1}的浏览器...")
+            viewport = build_human_viewport()
             context = p.chromium.launch_persistent_context(
                 user_data_dir=session_dir,
                 headless=args.headless,
                 slow_mo=args.slow_mo,
-                viewport={"width": 1440, "height": 1000},
+                viewport=viewport,
             )
             page = context.pages[0] if context.pages else context.new_page()
+            inject_stealth_scripts(context, page)
+            log(f"  - [反检测] 浏览器窗口尺寸: {viewport['width']}x{viewport['height']}", level="debug")
             
             if args.login_wait:
                 first_homepage_url = ""
@@ -1204,6 +1609,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                 login_url = first_homepage_url or "https://www.xiaohongshu.com/explore"
                 page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
                 page.wait_for_timeout(2000)
+                warm_up_page(page, mode="full")
                 check_verification_popup(page)
             
             contexts.append(context)
@@ -1214,6 +1620,33 @@ def update_note_urls_csv(args, csv_path, output_path):
         def get_current_page():
             return pages[current_session_idx % len(pages)]
 
+        def rotate_session_if_needed():
+            nonlocal current_session_idx, current_session_remaining
+            if session_mode != "rotate" or len(session_dirs) <= 1:
+                return
+            if current_session_remaining > 0:
+                return
+            previous_idx = current_session_idx
+            current_session_idx = (current_session_idx + 1) % len(session_dirs)
+            rest_sec = draw_session_switch_rest(session_switch_rest_min, session_switch_rest_max)
+            log(f"  - [切换账号] 账号{previous_idx + 1} 本轮结束，休息 {rest_sec} 秒后切换到账号{current_session_idx + 1}")
+            time.sleep(rest_sec)
+            current_session_remaining = draw_session_batch_size(session_batch_min, session_batch_max)
+            log(f"  - [账号轮换] 账号{current_session_idx + 1} 本轮计划处理 {current_session_remaining} 条")
+
+        def finish_session_item():
+            nonlocal current_session_remaining
+            if session_mode == "rotate" and len(session_dirs) > 1 and current_session_remaining > 0:
+                current_session_remaining -= 1
+
+        if session_mode == "rotate" and len(session_dirs) > 1:
+            current_session_remaining = draw_session_batch_size(session_batch_min, session_batch_max)
+            log(
+                f"[最稳轮换] 多账号按批次切换：每个账号连续处理 {session_batch_min}-{session_batch_max} 条，"
+                f"切换前休息 {session_switch_rest_min}-{session_switch_rest_max} 秒"
+            )
+            log(f"  - [账号轮换] 账号1 本轮计划处理 {current_session_remaining} 条")
+
         try:
             for index, item in enumerate(items, start=1):
                 row_idx = item["row"]
@@ -1222,18 +1655,14 @@ def update_note_urls_csv(args, csv_path, output_path):
                 old_url = item["old_url"]
                 old_note_id = extract_note_id(old_url)
 
-                if len(session_dirs) > 1:
-                    expected_session_idx = (index - 1) % len(session_dirs)
-                    if expected_session_idx != current_session_idx:
-                        current_session_idx = expected_session_idx
-                        log(f"  - [切换账号] → 账号{current_session_idx + 1}")
+                rotate_session_if_needed()
 
                 page = get_current_page()
                 log(f"\n[{index}/{len(items)}] 第 {row_idx} 行: {title}")
                 log(f"  - 使用账号{current_session_idx + 1}")
                 
                 if index > 1:
-                    random_delay(800, 2000)
+                    apply_between_item_pacing()
                 
                 batch_size = getattr(args, 'batch_size', 0)
                 batch_interval = getattr(args, 'batch_interval', 30)
@@ -1253,15 +1682,21 @@ def update_note_urls_csv(args, csv_path, output_path):
                         "reason": "笔记无标题(不可恢复)",
                     })
                     log("  - 跳过：笔记无标题，无法匹配")
+                    register_processing_outcome(True, row_idx=row_idx)
+                    finish_session_item()
                     continue
                 
                 if not title or not homepage_url:
                     skipped += 1
                     log("  - 跳过：标题或主页链接为空")
+                    register_processing_outcome(True, row_idx=row_idx)
+                    finish_session_item()
                     continue
                 if args.only_empty and not is_blank(old_url):
                     skipped += 1
                     log("  - 跳过：笔记官方地址已有内容")
+                    register_processing_outcome(True, row_idx=row_idx)
+                    finish_session_item()
                     continue
 
                 try:
@@ -1287,6 +1722,8 @@ def update_note_urls_csv(args, csv_path, output_path):
                         "reason": f"查找超时: {exc}",
                     })
                     log(f"  - 查找超时: {exc}")
+                    register_processing_outcome(False, row_idx=row_idx, reason="查找超时")
+                    finish_session_item()
                     continue
                 except Exception as exc:
                     note_url = ""
@@ -1299,6 +1736,8 @@ def update_note_urls_csv(args, csv_path, output_path):
                         "reason": f"查找失败: {exc}",
                     })
                     log(f"  - 查找失败: {exc}")
+                    register_processing_outcome(False, row_idx=row_idx, reason="查找失败")
+                    finish_session_item()
                     continue
 
                 if not note_url:
@@ -1313,6 +1752,8 @@ def update_note_urls_csv(args, csv_path, output_path):
                     })
                     log(f"  - 未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}), 保持原值")
                     log(f"  - [结果汇总] 行{row_idx} 失败(未找到匹配) | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
+                    register_processing_outcome(False, row_idx=row_idx, reason="未找到匹配笔记")
+                    finish_session_item()
                     continue
 
                 new_note_id = extract_note_id(note_url)
@@ -1326,6 +1767,8 @@ def update_note_urls_csv(args, csv_path, output_path):
                         "reason": f"地址没有笔记ID: {note_url}",
                     })
                     log(f"  - 找到的地址没有笔记ID，保持原值: {note_url}")
+                    register_processing_outcome(False, row_idx=row_idx, reason="地址没有笔记ID")
+                    finish_session_item()
                     continue
 
                 rows_data[row_idx - 2][NOTE_URL_HEADER] = note_url
@@ -1335,6 +1778,8 @@ def update_note_urls_csv(args, csv_path, output_path):
                     id_note = f"（注意：笔记ID从 {old_note_id} 变为 {new_note_id}）"
                 log(f"  - 已更新: {note_url} {id_note}")
                 log(f"  - [结果汇总] 行{row_idx} 成功 | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
+                register_processing_outcome(True, row_idx=row_idx)
+                finish_session_item()
 
                 if args.save_every and updated % args.save_every == 0:
                     save_csv(rows_data, output_path, list(headers.keys()), original_csv_path=csv_path)
@@ -1493,22 +1938,32 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
     failed = 0
     actual_output_path = output_path
     failed_items = []
+    reset_pace_state()
+    session_mode = getattr(args, 'session_mode', 'rotate')
+    session_batch_min, session_batch_max, session_switch_rest_min, session_switch_rest_max = get_session_rotation_settings(args)
 
     with sync_playwright() as p:
         contexts = []
         pages = []
         current_session_idx = 0
+        current_session_remaining = 0
         
-        log(f"\n同时打开 {len(session_dirs)} 个浏览器窗口...")
+        if session_mode == "bind":
+            log(f"\n[绑定模式] 同时打开 {len(session_dirs)} 个浏览器窗口...")
+        else:
+            log(f"\n[轮换模式] 同时打开 {len(session_dirs)} 个浏览器窗口...")
         for i, session_dir in enumerate(session_dirs):
             log(f"  - 启动账号{i+1}的浏览器...")
+            viewport = build_human_viewport()
             context = p.chromium.launch_persistent_context(
                 user_data_dir=session_dir,
                 headless=args.headless,
                 slow_mo=args.slow_mo,
-                viewport={"width": 1440, "height": 1000},
+                viewport=viewport,
             )
             page = context.pages[0] if context.pages else context.new_page()
+            inject_stealth_scripts(context, page)
+            log(f"  - [反检测] 浏览器窗口尺寸: {viewport['width']}x{viewport['height']}", level="debug")
             
             if args.login_wait:
                 first_homepage_url = ""
@@ -1519,6 +1974,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                 login_url = first_homepage_url or "https://www.xiaohongshu.com/explore"
                 page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
                 page.wait_for_timeout(2000)
+                warm_up_page(page, mode="full")
                 check_verification_popup(page)
             
             contexts.append(context)
@@ -1529,6 +1985,33 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
         def get_current_page():
             return pages[current_session_idx % len(pages)]
 
+        def rotate_session_if_needed():
+            nonlocal current_session_idx, current_session_remaining
+            if session_mode != "rotate" or len(session_dirs) <= 1:
+                return
+            if current_session_remaining > 0:
+                return
+            previous_idx = current_session_idx
+            current_session_idx = (current_session_idx + 1) % len(session_dirs)
+            rest_sec = draw_session_switch_rest(session_switch_rest_min, session_switch_rest_max)
+            log(f"  - [切换账号] 账号{previous_idx + 1} 本轮结束，休息 {rest_sec} 秒后切换到账号{current_session_idx + 1}")
+            time.sleep(rest_sec)
+            current_session_remaining = draw_session_batch_size(session_batch_min, session_batch_max)
+            log(f"  - [账号轮换] 账号{current_session_idx + 1} 本轮计划处理 {current_session_remaining} 条")
+
+        def finish_session_item():
+            nonlocal current_session_remaining
+            if session_mode == "rotate" and len(session_dirs) > 1 and current_session_remaining > 0:
+                current_session_remaining -= 1
+
+        if session_mode == "rotate" and len(session_dirs) > 1:
+            current_session_remaining = draw_session_batch_size(session_batch_min, session_batch_max)
+            log(
+                f"[最稳轮换] 多账号按批次切换：每个账号连续处理 {session_batch_min}-{session_batch_max} 条，"
+                f"切换前休息 {session_switch_rest_min}-{session_switch_rest_max} 秒"
+            )
+            log(f"  - [账号轮换] 账号1 本轮计划处理 {current_session_remaining} 条")
+
         try:
             for index, item in enumerate(items, start=1):
                 row_idx = item["row"]
@@ -1537,18 +2020,14 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                 old_url = item["old_url"]
                 old_note_id = extract_note_id(old_url)
 
-                if len(session_dirs) > 1:
-                    expected_session_idx = (index - 1) % len(session_dirs)
-                    if expected_session_idx != current_session_idx:
-                        current_session_idx = expected_session_idx
-                        log(f"  - [切换账号] → 账号{current_session_idx + 1}")
+                rotate_session_if_needed()
 
                 page = get_current_page()
                 log(f"\n[{index}/{len(items)}] 第 {row_idx} 行: {title}")
                 log(f"  - 使用账号{current_session_idx + 1}")
                 
                 if index > 1:
-                    random_delay(800, 2000)
+                    apply_between_item_pacing()
                 
                 batch_size = getattr(args, 'batch_size', 0)
                 batch_interval = getattr(args, 'batch_interval', 30)
@@ -1568,15 +2047,21 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         "reason": "笔记无标题(不可恢复)",
                     })
                     log("  - 跳过：笔记无标题，无法匹配")
+                    register_processing_outcome(True, row_idx=row_idx)
+                    finish_session_item()
                     continue
                 
                 if not title or not homepage_url:
                     skipped += 1
                     log("  - 跳过：标题或主页链接为空")
+                    register_processing_outcome(True, row_idx=row_idx)
+                    finish_session_item()
                     continue
                 if args.only_empty and not is_blank(old_url):
                     skipped += 1
                     log("  - 跳过：笔记官方地址已有内容")
+                    register_processing_outcome(True, row_idx=row_idx)
+                    finish_session_item()
                     continue
 
                 try:
@@ -1602,6 +2087,8 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         "reason": f"查找超时: {exc}",
                     })
                     log(f"  - 查找超时: {exc}")
+                    register_processing_outcome(False, row_idx=row_idx, reason="查找超时")
+                    finish_session_item()
                     continue
                 except Exception as exc:
                     note_url = ""
@@ -1614,6 +2101,8 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         "reason": f"查找失败: {exc}",
                     })
                     log(f"  - 查找失败: {exc}")
+                    register_processing_outcome(False, row_idx=row_idx, reason="查找失败")
+                    finish_session_item()
                     continue
 
                 if not note_url:
@@ -1628,6 +2117,8 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     })
                     log(f"  - 未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}), 保持原值")
                     log(f"  - [结果汇总] 行{row_idx} 失败(未找到匹配) | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
+                    register_processing_outcome(False, row_idx=row_idx, reason="未找到匹配笔记")
+                    finish_session_item()
                     continue
 
                 new_note_id = extract_note_id(note_url)
@@ -1641,6 +2132,8 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         "reason": f"地址没有笔记ID: {note_url}",
                     })
                     log(f"  - 找到的地址没有笔记ID，保持原值: {note_url}")
+                    register_processing_outcome(False, row_idx=row_idx, reason="地址没有笔记ID")
+                    finish_session_item()
                     continue
 
                 ws.cell(row=row_idx, column=url_col).value = note_url
@@ -1650,6 +2143,8 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     id_note = f"（注意：笔记ID从 {old_note_id} 变为 {new_note_id}）"
                 log(f"  - 已更新: {note_url} {id_note}")
                 log(f"  - [结果汇总] 行{row_idx} 成功 | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
+                register_processing_outcome(True, row_idx=row_idx)
+                finish_session_item()
 
                 if args.save_every and updated % args.save_every == 0:
                     actual_output_path = save_workbook(wb, actual_output_path)
@@ -1717,8 +2212,12 @@ def build_arg_parser():
     parser.add_argument("--target-date", default=default_target_date, help=f"目标日期（格式：MM.DD），默认 {default_target_date}（当前日期往前推3天）")
     parser.add_argument("--batch-size", type=int, default=30, help="每处理多少条后休息一次，0表示不休息，默认30")
     parser.add_argument("--batch-interval", type=int, default=30, help="批次休息秒数，默认30")
-    parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，用于每条数据轮询账号")
-    parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=所有任务共享所有账号, bind=每个任务使用分配到的账号组")
+    parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，多账号场景下推荐按批次轮换")
+    parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=账号按批次轮换(推荐), bind=每个任务使用分配到的账号组")
+    parser.add_argument("--session-batch-min", type=int, default=ANTI_DETECTION_CONFIG["session_batch_min"], help="轮换模式下单账号最少连续处理多少条，默认10")
+    parser.add_argument("--session-batch-max", type=int, default=ANTI_DETECTION_CONFIG["session_batch_max"], help="轮换模式下单账号最多连续处理多少条，默认15")
+    parser.add_argument("--session-switch-rest-min", type=int, default=ANTI_DETECTION_CONFIG["session_switch_rest_min_sec"], help="轮换模式下切账号前最少休息秒数，默认60")
+    parser.add_argument("--session-switch-rest-max", type=int, default=ANTI_DETECTION_CONFIG["session_switch_rest_max_sec"], help="轮换模式下切账号前最多休息秒数，默认180")
     parser.add_argument("--log-file", default="", help="日志文件路径，默认自动生成到 logs/ 目录")
     return parser
 
