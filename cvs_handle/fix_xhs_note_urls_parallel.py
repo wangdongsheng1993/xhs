@@ -292,6 +292,7 @@ def main():
     parser.add_argument("--login-wait", type=int, default=50, help="登录等待秒数，默认 50")
     parser.add_argument("--only-empty", action="store_true", help="只处理空地址")
     parser.add_argument("--headless", action="store_true", help="无头模式")
+    parser.add_argument("--speed-mode", choices=["auto", "default", "turbo"], default="auto", help="速度模式: auto=大批量自动提速(默认), default=不提速, turbo=优先提速(轻风控)")
     parser.add_argument("--skip-no-title", action="store_true", default=True, help="跳过无标题笔记（默认开启）")
     parser.add_argument("--no-skip-no-title", action="store_true", help="不跳过无标题笔记")
     parser.add_argument("--target-date", default=default_target_date, help=f"目标日期（格式：MM.DD），默认 {default_target_date}（当前日期往前推3天）")
@@ -411,6 +412,8 @@ def main():
             command.append("--only-empty")
         if args.headless:
             command.append("--headless")
+        if args.speed_mode:
+            command.extend(["--speed-mode", args.speed_mode])
         if args.rows:
             command.extend(["--rows", args.rows])
         

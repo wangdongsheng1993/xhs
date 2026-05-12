@@ -72,6 +72,7 @@ class ParallelNoteUrlFixerApp:
         self.batch_interval_var = tk.StringVar(value="60")
         self.sessions_var = tk.StringVar(value="")
         self.session_mode_var = tk.StringVar(value="rotate")
+        self.speed_mode_var = tk.StringVar(value="auto")
 
         self.retry_csv_var = tk.StringVar()
         self.retry_failed_var = tk.StringVar()
@@ -82,6 +83,7 @@ class ParallelNoteUrlFixerApp:
         self.retry_skip_no_title_var = tk.BooleanVar(value=True)
         self.retry_target_date_var = tk.StringVar(value=DEFAULT_TARGET_DATE)
         self.retry_session_mode_var = tk.StringVar(value="rotate")
+        self.retry_speed_mode_var = tk.StringVar(value="auto")
 
         self.batch_files = []
 
@@ -171,8 +173,10 @@ class ParallelNoteUrlFixerApp:
         row5.grid(row=7, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
         
         ttk.Label(row5, text="账号模式").grid(row=0, column=0, sticky="w")
-        ttk.Radiobutton(row5, text="轮换(推荐：每个账号连续跑一小段)", variable=self.session_mode_var, value="rotate").grid(row=0, column=1, padx=(6, 0))
-        ttk.Radiobutton(row5, text="绑定(每个任务分配账号组)", variable=self.session_mode_var, value="bind").grid(row=0, column=2, padx=(16, 0))
+        ttk.Combobox(row5, textvariable=self.session_mode_var, values=["rotate", "bind"], width=8, state="readonly").grid(row=0, column=1, padx=(6, 16))
+
+        ttk.Label(row5, text="速度模式").grid(row=0, column=2, padx=(0, 6))
+        ttk.Combobox(row5, textvariable=self.speed_mode_var, values=["auto", "default", "turbo"], width=8, state="readonly").grid(row=0, column=3)
 
         hint = ttk.Label(settings, text="提示：轮换模式-账号按批次切换，默认单账号连续处理10-15条后休息60-180秒再切下一个；绑定模式-账号平均分配给各任务。", foreground="gray")
         hint.grid(row=8, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
@@ -211,10 +215,13 @@ class ParallelNoteUrlFixerApp:
         retry_row2 = ttk.Frame(retry_frame)
         retry_row2.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(4, 0))
 
-        ttk.Checkbutton(retry_row2, text="跳过无标题笔记（推荐）", variable=self.retry_skip_no_title_var).grid(row=0, column=0, padx=(0, 16))
+        ttk.Checkbutton(retry_row2, text="跳过无标题笔记", variable=self.retry_skip_no_title_var).grid(row=0, column=0, padx=(0, 12))
         
-        ttk.Label(retry_row2, text="目标日期").grid(row=0, column=1, sticky="w")
-        ttk.Entry(retry_row2, textvariable=self.retry_target_date_var, width=10).grid(row=0, column=2, padx=(6, 0))
+        ttk.Label(retry_row2, text="速度").grid(row=0, column=1, padx=(0, 4))
+        ttk.Combobox(retry_row2, textvariable=self.retry_speed_mode_var, values=["auto", "default", "turbo"], width=7, state="readonly").grid(row=0, column=2, padx=(0, 12))
+
+        ttk.Label(retry_row2, text="目标日期").grid(row=0, column=3, sticky="w")
+        ttk.Entry(retry_row2, textvariable=self.retry_target_date_var, width=8).grid(row=0, column=4, padx=(4, 0))
         ttk.Label(retry_row2, text="（如 5-7，检测到更早日期时提前停止）", foreground="gray").grid(row=0, column=3, padx=(4, 0))
 
         retry_hint = ttk.Label(retry_frame, text="选择之前执行的结果CSV和对应的失败数据CSV，对失败行重新查找并更新回结果CSV。", foreground="gray")
@@ -404,6 +411,10 @@ class ParallelNoteUrlFixerApp:
         if session_mode:
             command.extend(["--session-mode", session_mode])
         
+        speed_mode = self.speed_mode_var.get().strip()
+        if speed_mode:
+            command.extend(["--speed-mode", speed_mode])
+        
         return command
 
     def _build_retry_command(self):
@@ -446,6 +457,10 @@ class ParallelNoteUrlFixerApp:
         session_mode = self.session_mode_var.get().strip()
         if session_mode:
             command.extend(["--session-mode", session_mode])
+        
+        speed_mode = self.retry_speed_mode_var.get().strip()
+        if speed_mode:
+            command.extend(["--speed-mode", speed_mode])
         
         return command
 

@@ -11,7 +11,7 @@ from tkinter.scrolledtext import ScrolledText
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_PATH = os.path.join(BASE_DIR, "fix_xhs_note_urls.py")
 DEFAULT_EXCEL_PATH = os.path.join(BASE_DIR, "小红书笔记列表_规范Excel版.xlsx")
-XLSX_FILE_TYPES = [("Excel files", "*.xlsx"), ("All files", "*.*")]
+XLSX_FILE_TYPES = [("Excel/CSV files", "*.xlsx *.csv"), ("Excel files", "*.xlsx"), ("CSV files", "*.csv"), ("All files", "*.*")]
 
 
 def resolve_cli_python():
@@ -40,10 +40,11 @@ class NoteUrlFixerApp:
         self.output_path_var = tk.StringVar(value=DEFAULT_EXCEL_PATH)
         self.sheet_var = tk.StringVar(value="小红书笔记列表")
         self.rows_var = tk.StringVar()
-        self.login_wait_var = tk.StringVar(value="20")
-        self.max_scrolls_var = tk.StringVar(value="28")
+        self.login_wait_var = tk.StringVar(value="12")
+        self.max_scrolls_var = tk.StringVar(value="8")
         self.only_empty_var = tk.BooleanVar(value=False)
         self.headless_var = tk.BooleanVar(value=False)
+        self.speed_mode_var = tk.StringVar(value="turbo")
 
         self._build_ui()
         self.root.after(150, self._drain_log_queue)
@@ -60,7 +61,7 @@ class NoteUrlFixerApp:
         title = ttk.Label(form, text="小红书笔记官方地址修复", font=("Microsoft YaHei UI", 16, "bold"))
         title.grid(row=0, column=0, columnspan=3, sticky="w")
 
-        ttk.Label(form, text="Excel").grid(row=1, column=0, sticky="w", pady=(14, 6))
+        ttk.Label(form, text="Excel/CSV").grid(row=1, column=0, sticky="w", pady=(14, 6))
         ttk.Entry(form, textvariable=self.excel_path_var).grid(row=1, column=1, sticky="ew", padx=8, pady=(14, 6))
         ttk.Button(form, text="浏览", command=self._pick_excel).grid(row=1, column=2, sticky="ew", pady=(14, 6))
 
@@ -93,7 +94,10 @@ class NoteUrlFixerApp:
         ttk.Label(option_row, text="次").grid(row=0, column=5, padx=(0, 14))
 
         ttk.Checkbutton(option_row, text="只处理空地址", variable=self.only_empty_var).grid(row=0, column=6, padx=(0, 14))
-        ttk.Checkbutton(option_row, text="无头模式", variable=self.headless_var).grid(row=0, column=7)
+        ttk.Checkbutton(option_row, text="无头模式", variable=self.headless_var).grid(row=0, column=7, padx=(0, 14))
+
+        ttk.Label(option_row, text="速度模式").grid(row=0, column=8, sticky="w")
+        ttk.Combobox(option_row, textvariable=self.speed_mode_var, values=["auto", "default", "turbo"], width=8, state="readonly").grid(row=0, column=9)
 
         actions = ttk.Frame(self.root, padding=(16, 12))
         actions.grid(row=3, column=0, sticky="ew")
@@ -116,14 +120,17 @@ class NoteUrlFixerApp:
 
     def _pick_excel(self):
         path = filedialog.askopenfilename(
-            title="选择 Excel",
+            title="选择 Excel/CSV",
             initialdir=BASE_DIR,
             filetypes=XLSX_FILE_TYPES,
         )
         if not path:
             return
         self.excel_path_var.set(path)
-        self.output_path_var.set(path)
+        folder = os.path.dirname(path)
+        name, ext = os.path.splitext(os.path.basename(path))
+        default_ext = ".csv" if ext.lower() == ".csv" else ".xlsx"
+        self.output_path_var.set(os.path.join(folder, f"{name}_结果{default_ext}"))
 
     def _pick_output(self):
         current = self.output_path_var.get().strip() or self.excel_path_var.get().strip() or DEFAULT_EXCEL_PATH
@@ -146,9 +153,9 @@ class NoteUrlFixerApp:
         max_scrolls = self.max_scrolls_var.get().strip()
 
         if not excel_path:
-            raise ValueError("请选择 Excel。")
+            raise ValueError("请选择 Excel/CSV。")
         if not os.path.exists(excel_path):
-            raise ValueError("Excel 文件不存在。")
+            raise ValueError("输入文件不存在。")
         if not output_path:
             raise ValueError("请填写输出路径。")
         if not sheet_name:
@@ -183,6 +190,11 @@ class NoteUrlFixerApp:
             command.append("--only-empty")
         if self.headless_var.get():
             command.append("--headless")
+        
+        speed_mode = self.speed_mode_var.get().strip()
+        if speed_mode:
+            command.extend(["--speed-mode", speed_mode])
+            
         return command
 
     def _start_run(self):
@@ -197,7 +209,7 @@ class NoteUrlFixerApp:
         if os.path.abspath(self.excel_path_var.get().strip()) == os.path.abspath(self.output_path_var.get().strip()):
             confirmed = messagebox.askyesno(
                 "确认覆盖",
-                "输出路径与输入 Excel 相同。脚本会先自动备份原文件，再更新原文件。\n是否继续？",
+                "输出路径与输入文件相同。脚本会先自动备份原文件，再更新原文件。\n是否继续？",
             )
             if not confirmed:
                 return

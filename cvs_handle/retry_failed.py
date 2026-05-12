@@ -56,6 +56,7 @@ def retry_failed(
     user_data_dir=DEFAULT_USER_DATA_DIR,
     skip_no_title=True,
     target_date=None,
+    speed_mode="auto",
 ):
     failed_rows = read_failed_rows(failed_csv_path)
     if not failed_rows:
@@ -144,6 +145,7 @@ def retry_failed(
                         require_xsec_token=True,
                         per_item_timeout_sec=per_item_timeout,
                         target_date=target_date,
+                        speed_mode=speed_mode,
                     )
                 except PlaywrightTimeoutError as exc:
                     note_url = ""
@@ -214,6 +216,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-interval", type=int, default=30, help="批次休息秒数，默认30")
     parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，如 session1,session2,session3")
     parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=所有任务共享所有账号, bind=每个任务使用分配到的账号组")
+    parser.add_argument("--speed-mode", choices=["auto", "default", "turbo"], default="auto", help="速度模式: auto=自动, default=保守, turbo=极速")
     args = parser.parse_args()
 
     skip_no_title = args.skip_no_title and not args.no_skip_no_title
@@ -248,4 +251,5 @@ if __name__ == "__main__":
         user_data_dir=user_data_dir,
         skip_no_title=skip_no_title,
         target_date=target_date,
+        speed_mode=args.speed_mode,
     )

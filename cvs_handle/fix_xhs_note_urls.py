@@ -119,6 +119,9 @@ ANTI_DETECTION_CONFIG = {
     "light_warmup_dwell_max_ms": 450,
 }
 
+FIXED_SESSION_BATCH_SIZE = 100
+FIXED_SESSION_SWITCH_REST_SEC = 120
+
 RISK_CONTROL_STATE = {
     "consecutive_verification_hits": 0,
     "last_verification_detected_at": 0.0,
@@ -134,6 +137,8 @@ PACE_CONTROL_STATE = {
 
 MOUSE_TRACK_STATE = {}
 PAGE_VISIT_STATE = {}
+
+SPEED_PROFILE = "default"
 
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -489,21 +494,10 @@ def find_note_candidate(page, title):
                 if (value === target) return 100;
                 if (value.includes(target)) return 90;
                 if (target.includes(value) && value.length >= Math.min(10, target.length)) return 70;
-                // 模糊匹配：计算最长公共子序列长度
-                const lcs = (a, b) => {
-                    const m = a.length, n = b.length;
-                    const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
-                    for (let i = 1; i <= m; i++) {
-                        for (let j = 1; j <= n; j++) {
-                            if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
-                            else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-                        }
-                    }
-                    return dp[m][n];
-                };
-                const commonLen = lcs(value, target);
-                const similarity = commonLen / Math.max(value.length, target.length);
-                if (similarity >= 0.6 && value.length >= 6) return Math.round(50 + similarity * 30);
+                if (value.length >= 8 && target.length >= 8) {
+                    if (value.slice(0, 8) === target.slice(0, 8)) return 65;
+                    if (value.slice(-8) === target.slice(-8)) return 60;
+                }
                 return 0;
             };
 
@@ -902,6 +896,7 @@ def wait_for_current_note_url(page, expected_note_id="", timeout_ms=6000, requir
     expected_note_id = str(expected_note_id or "").strip()
     check_count = 0
     first_url = normalize_note_url(page.url)
+    poll_interval_ms = get_note_url_poll_interval_ms()
     log(f"  - [等待地址栏] 开始等待: 当前URL={first_url[:80]}, 期望noteId={expected_note_id}, 超时={timeout_ms}ms, 需要xsec_token={require_xsec_token}")
     while time.time() < deadline:
         current_url = normalize_note_url(page.url)
@@ -913,7 +908,7 @@ def wait_for_current_note_url(page, expected_note_id="", timeout_ms=6000, requir
                 if is_valid_address_bar_note_url(current_url, require_xsec_token=require_xsec_token):
                     log(f"  - [等待地址栏] 成功: 检查{check_count}次, URL={current_url[:80]}")
                     return current_url
-        page.wait_for_timeout(250)
+        page.wait_for_timeout(poll_interval_ms)
     elapsed = time.time() - (deadline - timeout_ms / 1000)
     if best:
         log(f"  - [等待地址栏] 超时{elapsed:.1f}s/{timeout_ms/1000:.1f}s 检查{check_count}次, 有基础URL但无xsec_token: {best[:80]}")
@@ -1042,6 +1037,23 @@ def random_delay(min_ms=None, max_ms=None):
         max_ms = ANTI_DETECTION_CONFIG["max_delay_ms"]
     delay = random.randint(min_ms, max_ms)
     time.sleep(delay / 1000.0)
+
+
+def is_turbo_speed_mode(speed_mode):
+    return str(speed_mode or "").strip().lower() in {"turbo", "fastest"}
+
+
+def format_duration(seconds):
+    try:
+        total = int(max(0, seconds))
+    except Exception:
+        total = 0
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    sec = total % 60
+    if hours:
+        return f"{hours}:{minutes:02d}:{sec:02d}"
+    return f"{minutes:02d}:{sec:02d}"
 
 
 def reset_pace_state():
@@ -1188,8 +1200,11 @@ def move_mouse_naturally(page, target_x, target_y, min_steps=8, max_steps=18):
 def human_like_scroll(page, pixels=None):
     if pixels is None:
         pixels = random.randint(300, 800)
-    
-    steps = random.randint(3, 6)
+
+    if SPEED_PROFILE == "turbo":
+        steps = random.randint(1, 2)
+    else:
+        steps = random.randint(3, 6)
     pixels_per_step = pixels // steps
     remainder = pixels % steps
     
@@ -1201,6 +1216,91 @@ def human_like_scroll(page, pixels=None):
             ANTI_DETECTION_CONFIG["scroll_delay_max_ms"]
         )
         time.sleep(delay / 1000.0)
+
+
+def get_note_url_poll_interval_ms():
+    if SPEED_PROFILE == "turbo":
+        return 80
+    if SPEED_PROFILE == "fast_batch":
+        return 140
+    return 250
+
+
+def get_post_navigation_settle_wait_ms():
+    if SPEED_PROFILE == "turbo":
+        return random.randint(120, 260)
+    if SPEED_PROFILE == "fast_batch":
+        return random.randint(220, 420)
+    return random.randint(600, 1200)
+
+
+def get_post_selector_settle_wait_ms():
+    if SPEED_PROFILE == "turbo":
+        return random.randint(80, 180)
+    if SPEED_PROFILE == "fast_batch":
+        return random.randint(160, 320)
+    return random.randint(500, 1000)
+
+
+def get_scroll_stuck_wait_ms():
+    if SPEED_PROFILE == "turbo":
+        return 100
+    if SPEED_PROFILE == "fast_batch":
+        return 180
+    return 400
+
+
+def get_effective_slow_mo(args):
+    slow_mo = int(getattr(args, "slow_mo", 0) or 0)
+    if is_turbo_speed_mode(getattr(args, "speed_mode", "")) and slow_mo == 80:
+        return 0
+    return slow_mo
+
+
+def get_effective_detail_wait_ms(args):
+    detail_wait_ms = int(getattr(args, "detail_wait_ms", 0) or 0)
+    if is_turbo_speed_mode(getattr(args, "speed_mode", "")) and detail_wait_ms >= 8000:
+        return 2500
+    return detail_wait_ms
+
+
+def get_effective_max_scrolls(args):
+    max_scrolls = int(getattr(args, "max_scrolls", 0) or 0)
+    if is_turbo_speed_mode(getattr(args, "speed_mode", "")) and max_scrolls >= 12:
+        return 8
+    return max_scrolls
+
+
+def get_effective_per_item_timeout(args):
+    per_item_timeout = int(getattr(args, "per_item_timeout", 0) or 0)
+    if is_turbo_speed_mode(getattr(args, "speed_mode", "")) and per_item_timeout >= 20:
+        return 12
+    return per_item_timeout
+
+
+def get_effective_batch_pause(args):
+    batch_size = int(getattr(args, "batch_size", 0) or 0)
+    batch_interval = int(getattr(args, "batch_interval", 0) or 0)
+    if is_turbo_speed_mode(getattr(args, "speed_mode", "")):
+        if batch_size > 0 and batch_interval >= 20 and batch_size <= 30:
+            log(
+                f"  - [速度模式] turbo 下已忽略重批次休息配置: batch_size={batch_size}, batch_interval={batch_interval}",
+                level="debug",
+            )
+            return 0, 0
+        if batch_size > 0 and batch_size <= 30 and batch_interval > 3:
+            batch_interval = 3
+    return batch_size, batch_interval
+
+
+def get_effective_save_every(args):
+    save_every = int(getattr(args, "save_every", 0) or 0)
+    if is_turbo_speed_mode(getattr(args, "speed_mode", "")) and save_every == 20:
+        log("  - [速度模式] turbo 下关闭过程高频保存，仅在结束/中断时保存", level="debug")
+        return 0
+    if str(getattr(args, "speed_mode", "")).strip().lower() == "auto" and save_every == 20:
+        return 100
+    return save_every
 
 
 def build_human_viewport():
@@ -1222,10 +1322,88 @@ def choose_warmup_mode(page, homepage_url):
     state = PAGE_VISIT_STATE.setdefault(id(page), {})
     last_homepage = state.get("last_homepage_url", "")
     mode = "full"
+    if SPEED_PROFILE == "fast_batch":
+        mode = "light" if random.random() < 0.88 else "skip"
+    elif SPEED_PROFILE == "turbo":
+        mode = "skip" if random.random() < 0.92 else "light"
+    else:
+        mode = "full"
     if homepage_url and homepage_url == last_homepage:
         mode = "light" if random.random() < ANTI_DETECTION_CONFIG["light_warmup_probability"] else "skip"
     state["last_homepage_url"] = homepage_url
     return mode
+
+
+def apply_speed_profile_for_large_batch(total_items, session_mode="rotate", speed_mode="auto"):
+    global SPEED_PROFILE
+    speed_mode = str(speed_mode or "auto").strip().lower()
+    if speed_mode in {"off", "default", "normal"}:
+        SPEED_PROFILE = "default"
+        return
+    if speed_mode in {"turbo", "fastest"}:
+        SPEED_PROFILE = "turbo"
+        ANTI_DETECTION_CONFIG["between_item_delay_min_ms"] = 10
+        ANTI_DETECTION_CONFIG["between_item_delay_max_ms"] = 60
+        ANTI_DETECTION_CONFIG["micro_rest_every_min"] = 80
+        ANTI_DETECTION_CONFIG["micro_rest_every_max"] = 140
+        ANTI_DETECTION_CONFIG["micro_rest_min_sec"] = 0
+        ANTI_DETECTION_CONFIG["micro_rest_max_sec"] = 1
+        ANTI_DETECTION_CONFIG["scroll_delay_min_ms"] = 80
+        ANTI_DETECTION_CONFIG["scroll_delay_max_ms"] = 220
+        ANTI_DETECTION_CONFIG["page_warmup_points_min"] = 0
+        ANTI_DETECTION_CONFIG["page_warmup_points_max"] = 1
+        ANTI_DETECTION_CONFIG["page_warmup_pause_min_ms"] = 20
+        ANTI_DETECTION_CONFIG["page_warmup_pause_max_ms"] = 80
+        ANTI_DETECTION_CONFIG["page_warmup_dwell_min_ms"] = 0
+        ANTI_DETECTION_CONFIG["page_warmup_dwell_max_ms"] = 80
+        ANTI_DETECTION_CONFIG["light_warmup_probability"] = 0.995
+        ANTI_DETECTION_CONFIG["light_warmup_points_min"] = 0
+        ANTI_DETECTION_CONFIG["light_warmup_points_max"] = 1
+        ANTI_DETECTION_CONFIG["light_warmup_pause_min_ms"] = 20
+        ANTI_DETECTION_CONFIG["light_warmup_pause_max_ms"] = 60
+        ANTI_DETECTION_CONFIG["light_warmup_dwell_min_ms"] = 0
+        ANTI_DETECTION_CONFIG["light_warmup_dwell_max_ms"] = 60
+        ANTI_DETECTION_CONFIG["mouse_pre_hover_probability"] = 0.05
+        ANTI_DETECTION_CONFIG["failure_cooldown_threshold"] = 6
+        ANTI_DETECTION_CONFIG["failure_cooldown_min_sec"] = 8
+        ANTI_DETECTION_CONFIG["failure_cooldown_max_sec"] = 18
+        ANTI_DETECTION_CONFIG["failure_cooldown_gap_sec"] = 60
+        ANTI_DETECTION_CONFIG["verification_cooldown_threshold"] = 4
+        ANTI_DETECTION_CONFIG["verification_cooldown_min_sec"] = 20
+        ANTI_DETECTION_CONFIG["verification_cooldown_max_sec"] = 45
+        ANTI_DETECTION_CONFIG["verification_cooldown_gap_sec"] = 90
+        if session_mode == "rotate":
+            ANTI_DETECTION_CONFIG["session_switch_rest_min_sec"] = 5
+            ANTI_DETECTION_CONFIG["session_switch_rest_max_sec"] = 15
+        log("  - [速度模式] 已启用 turbo：轻风控，优先提速")
+        return
+    if total_items < 800:
+        SPEED_PROFILE = "default"
+        return
+    SPEED_PROFILE = "fast_batch"
+    ANTI_DETECTION_CONFIG["between_item_delay_min_ms"] = 320
+    ANTI_DETECTION_CONFIG["between_item_delay_max_ms"] = 950
+    ANTI_DETECTION_CONFIG["micro_rest_every_min"] = 10
+    ANTI_DETECTION_CONFIG["micro_rest_every_max"] = 16
+    ANTI_DETECTION_CONFIG["micro_rest_min_sec"] = 4
+    ANTI_DETECTION_CONFIG["micro_rest_max_sec"] = 10
+    ANTI_DETECTION_CONFIG["page_warmup_points_min"] = 1
+    ANTI_DETECTION_CONFIG["page_warmup_points_max"] = 2
+    ANTI_DETECTION_CONFIG["page_warmup_pause_min_ms"] = 120
+    ANTI_DETECTION_CONFIG["page_warmup_pause_max_ms"] = 420
+    ANTI_DETECTION_CONFIG["page_warmup_dwell_min_ms"] = 250
+    ANTI_DETECTION_CONFIG["page_warmup_dwell_max_ms"] = 650
+    ANTI_DETECTION_CONFIG["light_warmup_probability"] = 0.92
+    ANTI_DETECTION_CONFIG["light_warmup_points_min"] = 1
+    ANTI_DETECTION_CONFIG["light_warmup_points_max"] = 1
+    ANTI_DETECTION_CONFIG["light_warmup_pause_min_ms"] = 80
+    ANTI_DETECTION_CONFIG["light_warmup_pause_max_ms"] = 240
+    ANTI_DETECTION_CONFIG["light_warmup_dwell_min_ms"] = 120
+    ANTI_DETECTION_CONFIG["light_warmup_dwell_max_ms"] = 320
+    if session_mode == "rotate":
+        ANTI_DETECTION_CONFIG["session_switch_rest_min_sec"] = 35
+        ANTI_DETECTION_CONFIG["session_switch_rest_max_sec"] = 90
+    log("  - [速度模式] 已启用 fast_batch：大批量提速（偏保守）")
 
 
 def warm_up_page(page, mode="full"):
@@ -1373,8 +1551,24 @@ def locate_note_url(
     goto_timeout_ms = 45000
     if per_item_timeout_sec and per_item_timeout_sec > 0:
         goto_timeout_ms = min(45000, max(15000, int(per_item_timeout_sec * 1000)))
+    if note_id_hint:
+        try:
+            direct_url = f"https://www.xiaohongshu.com/explore/{note_id_hint}"
+            goto_with_retry(page, direct_url, timeout_ms=min(20000, goto_timeout_ms), retries=0)
+            if check_verification_popup(page):
+                resolved_url = wait_for_current_note_url(
+                    page,
+                    expected_note_id=note_id_hint,
+                    timeout_ms=detail_wait_ms,
+                    require_xsec_token=require_xsec_token,
+                )
+                if resolved_url:
+                    log(f"  - [定位流程] 直达笔记成功: {resolved_url}")
+                    return resolved_url
+        except Exception as exc:
+            log(f"  - [定位流程] 直达笔记失败，回退主页查找: {exc}", level="debug")
     goto_with_retry(page, homepage_url, timeout_ms=goto_timeout_ms, retries=1 if per_item_timeout_sec and per_item_timeout_sec <= 30 else 2)
-    page.wait_for_timeout(random.randint(1500, 2500))
+    page.wait_for_timeout(get_post_navigation_settle_wait_ms())
     warm_up_mode = choose_warmup_mode(page, homepage_url)
     warm_up_page(page, mode=warm_up_mode)
     nav_elapsed = time.time() - nav_start
@@ -1408,8 +1602,9 @@ def locate_note_url(
         log(f"  - [定位流程] 未点击到笔记Tab，页面可能不是用户主页或Tab结构已变")
     
     try:
-        page.wait_for_selector('a[href*="/explore/"], a[href*="/user/profile/"]', timeout=5000)
-        page.wait_for_timeout(random.randint(500, 1000))
+        selector_timeout_ms = 1500 if SPEED_PROFILE == "turbo" else 2500 if SPEED_PROFILE == "fast_batch" else 5000
+        page.wait_for_selector('a[href*="/explore/"], a[href*="/user/profile/"]', timeout=selector_timeout_ms)
+        page.wait_for_timeout(get_post_selector_settle_wait_ms())
     except Exception:
         log(f"  - [定位流程] 等待页面元素超时，继续尝试查找")
 
@@ -1420,61 +1615,11 @@ def locate_note_url(
     scroll_count = 0
     early_stop_due_to_date = False
 
-    debug_dumped = False
-
     for scroll_index in range(max_scrolls + 1):
         elapsed = time.time() - search_start
         if elapsed > per_item_timeout_sec:
             log(f"  - [定位流程] 已超时 ({elapsed:.1f}秒 > {per_item_timeout_sec}秒)，停止查找 (已滚动{scroll_count}次)")
             return ""
-
-        if not debug_dumped:
-            debug_dumped = True
-            try:
-                debug_info = page.evaluate(
-                    """
-                    () => {
-                        const normalize = (value) => String(value || '')
-                            .trim()
-                            .toLowerCase()
-                            .replace(/[\\s\\u200b\\u200c\\u200d\\ufeff]+/g, '');
-                        const anchors = Array.from(document.querySelectorAll(
-                            'a[href*="/explore/"], a[href*="/user/profile/"]'
-                        ));
-                        const visible = anchors.filter(a => {
-                            const rect = a.getBoundingClientRect();
-                            return rect.width > 0 && rect.height > 0;
-                        });
-                        const items = visible.slice(0, 20).map(a => {
-                            const href = a.getAttribute('href') || a.href || '';
-                            const text = (a.innerText || a.textContent || '').trim().substring(0, 60);
-                            const rect = a.getBoundingClientRect();
-                            let parentText = '';
-                            let p = a.parentElement;
-                            for (let i = 0; p && i < 5; i++) {
-                                parentText = (p.innerText || p.textContent || '').trim().substring(0, 80);
-                                if (parentText.length > text.length) break;
-                                p = p.parentElement;
-                            }
-                            return {
-                                href: href.substring(0, 100),
-                                text,
-                                parentText: parentText.substring(0, 80),
-                                normalizedText: normalize(text).substring(0, 60),
-                                w: Math.round(rect.width),
-                                h: Math.round(rect.height),
-                            };
-                        });
-                        return { totalAnchors: anchors.length, visibleAnchors: visible.length, items };
-                    }
-                    """
-                )
-                if debug_info:
-                    log(f"  - [调试] 页面锚点: 总计={debug_info.get('totalAnchors',0)} 可见={debug_info.get('visibleAnchors',0)}")
-                    for i, item in enumerate(debug_info.get("items", [])):
-                        log(f"  - [调试] 卡片{i}: text='{item.get('text','')}' normalized='{item.get('normalizedText','')}' href='{item.get('href','')}' 尺寸={item.get('w',0)}x{item.get('h',0)}")
-            except Exception as exc:
-                log(f"  - [调试] 获取页面卡片信息失败: {exc}")
 
         candidate = None
         if note_id_hint:
@@ -1599,7 +1744,7 @@ def locate_note_url(
             if no_change_count >= max_no_change:
                 log(f"  - [定位流程] 页面已到底部，连续 {no_change_count} 次无变化，提前退出 (已滚动{scroll_count}次, 页面高度={current_height})")
                 break
-            page.wait_for_timeout(400)
+            page.wait_for_timeout(get_scroll_stuck_wait_ms())
         else:
             no_change_count = 0
         last_height = next_height
@@ -1735,6 +1880,11 @@ def update_note_urls_csv(args, csv_path, output_path):
             "homepage_url": str(row_data.get(HOMEPAGE_HEADER, "") or "").strip(),
             "old_url": str(row_data.get(NOTE_URL_HEADER, "") or "").strip(),
         })
+    apply_speed_profile_for_large_batch(
+        len(items),
+        session_mode=getattr(args, "session_mode", "rotate"),
+        speed_mode=getattr(args, "speed_mode", "auto"),
+    )
 
     if os.path.abspath(csv_path) == os.path.abspath(output_path):
         backup_path = make_backup(csv_path)
@@ -1771,9 +1921,18 @@ def update_note_urls_csv(args, csv_path, output_path):
     failed = 0
     failed_items = []
     reset_pace_state()
+    detail_wait_ms = get_effective_detail_wait_ms(args)
+    max_scrolls = get_effective_max_scrolls(args)
+    per_item_timeout_sec = get_effective_per_item_timeout(args)
+    batch_size, batch_interval = get_effective_batch_pause(args)
+    save_every = get_effective_save_every(args)
 
     session_mode = getattr(args, 'session_mode', 'rotate')
+    multi_session_fixed_rotate = session_mode == "rotate" and len(session_dirs) > 1
     session_batch_min, session_batch_max, session_switch_rest_min, session_switch_rest_max = get_session_rotation_settings(args)
+    if multi_session_fixed_rotate:
+        batch_size = 0
+        batch_interval = 0
 
     with sync_playwright() as p:
         contexts = []
@@ -1792,7 +1951,7 @@ def update_note_urls_csv(args, csv_path, output_path):
             context = p.chromium.launch_persistent_context(
                 user_data_dir=session_dir,
                 headless=args.headless,
-                slow_mo=args.slow_mo,
+                slow_mo=get_effective_slow_mo(args),
                 viewport=viewport,
             )
             page = context.pages[0] if context.pages else context.new_page()
@@ -1827,27 +1986,46 @@ def update_note_urls_csv(args, csv_path, output_path):
                 return
             previous_idx = current_session_idx
             current_session_idx = (current_session_idx + 1) % len(session_dirs)
-            rest_sec = draw_session_switch_rest(session_switch_rest_min, session_switch_rest_max)
+            rest_sec = FIXED_SESSION_SWITCH_REST_SEC if multi_session_fixed_rotate else draw_session_switch_rest(session_switch_rest_min, session_switch_rest_max)
             log(f"  - [切换账号] 账号{previous_idx + 1} 本轮结束，休息 {rest_sec} 秒后切换到账号{current_session_idx + 1}")
             time.sleep(rest_sec)
-            current_session_remaining = draw_session_batch_size(session_batch_min, session_batch_max)
+            current_session_remaining = FIXED_SESSION_BATCH_SIZE if multi_session_fixed_rotate else draw_session_batch_size(session_batch_min, session_batch_max)
             log(f"  - [账号轮换] 账号{current_session_idx + 1} 本轮计划处理 {current_session_remaining} 条")
 
-        def finish_session_item():
-            nonlocal current_session_remaining
+        perf_total_sec = 0.0
+        perf_count = 0
+
+        def finish_session_item(item_start_time=None, item_index=None):
+            nonlocal current_session_remaining, perf_total_sec, perf_count
             if session_mode == "rotate" and len(session_dirs) > 1 and current_session_remaining > 0:
                 current_session_remaining -= 1
+            if item_start_time and item_index:
+                perf_count += 1
+                spent = time.time() - item_start_time
+                perf_total_sec += spent
+                if perf_count == 1 or perf_count % 20 == 0:
+                    avg = perf_total_sec / max(1, perf_count)
+                    remaining = max(0, len(items) - int(item_index))
+                    eta = avg * remaining
+                    log(f"  - [效率] 本条={spent:.1f}s 平均={avg:.1f}s 预计剩余={format_duration(eta)}")
 
         if session_mode == "rotate" and len(session_dirs) > 1:
-            current_session_remaining = draw_session_batch_size(session_batch_min, session_batch_max)
-            log(
-                f"[最稳轮换] 多账号按批次切换：每个账号连续处理 {session_batch_min}-{session_batch_max} 条，"
-                f"切换前休息 {session_switch_rest_min}-{session_switch_rest_max} 秒"
-            )
+            current_session_remaining = FIXED_SESSION_BATCH_SIZE if multi_session_fixed_rotate else draw_session_batch_size(session_batch_min, session_batch_max)
+            if multi_session_fixed_rotate:
+                log(
+                    f"[固定轮换] 多账号单任务顺序执行：每个账号固定处理 {FIXED_SESSION_BATCH_SIZE} 条，"
+                    f"切换前休息 {FIXED_SESSION_SWITCH_REST_SEC} 秒"
+                )
+            else:
+                log(
+                    f"[最稳轮换] 多账号按批次切换：每个账号连续处理 {session_batch_min}-{session_batch_max} 条，"
+                    f"切换前休息 {session_switch_rest_min}-{session_switch_rest_max} 秒"
+                )
             log(f"  - [账号轮换] 账号1 本轮计划处理 {current_session_remaining} 条")
 
         try:
             for index, item in enumerate(items, start=1):
+                item_start_time = time.time()
                 row_idx = item["row"]
                 title = item["title"]
                 homepage_url = item["homepage_url"]
@@ -1863,8 +2041,6 @@ def update_note_urls_csv(args, csv_path, output_path):
                 if index > 1:
                     apply_between_item_pacing()
                 
-                batch_size = getattr(args, 'batch_size', 0)
-                batch_interval = getattr(args, 'batch_interval', 30)
                 if batch_size > 0 and index > 1 and (index - 1) % batch_size == 0:
                     log(f"  - [批次休息] 已处理 {index - 1} 条，休息 {batch_interval} 秒避免风控...")
                     time.sleep(batch_interval)
@@ -1882,20 +2058,20 @@ def update_note_urls_csv(args, csv_path, output_path):
                     })
                     log("  - 跳过：笔记无标题，无法匹配")
                     register_processing_outcome(True, row_idx=row_idx)
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
                 
                 if not title or not homepage_url:
                     skipped += 1
                     log("  - 跳过：标题或主页链接为空")
                     register_processing_outcome(True, row_idx=row_idx)
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
                 if args.only_empty and not is_blank(old_url):
                     skipped += 1
                     log("  - 跳过：笔记官方地址已有内容")
                     register_processing_outcome(True, row_idx=row_idx)
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
 
                 try:
@@ -1903,11 +2079,11 @@ def update_note_urls_csv(args, csv_path, output_path):
                         page,
                         homepage_url,
                         title,
-                        max_scrolls=args.max_scrolls,
+                        max_scrolls=max_scrolls,
                         scroll_pixels=args.scroll_pixels,
-                        detail_wait_ms=args.detail_wait_ms,
+                        detail_wait_ms=detail_wait_ms,
                         require_xsec_token=not args.allow_basic_url,
-                        per_item_timeout_sec=args.per_item_timeout,
+                        per_item_timeout_sec=per_item_timeout_sec,
                         target_date=target_date,
                         note_id_hint=old_note_id,
                     )
@@ -1923,7 +2099,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                     })
                     log(f"  - 查找超时: {exc}")
                     register_processing_outcome(False, row_idx=row_idx, reason="查找超时")
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
                 except Exception as exc:
                     note_url = ""
@@ -1937,7 +2113,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                     })
                     log(f"  - 查找失败: {exc}")
                     register_processing_outcome(False, row_idx=row_idx, reason="查找失败")
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
 
                 if not note_url:
@@ -1953,7 +2129,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                     log(f"  - 未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}), 保持原值")
                     log(f"  - [结果汇总] 行{row_idx} 失败(未找到匹配) | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
                     register_processing_outcome(False, row_idx=row_idx, reason="未找到匹配笔记")
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
 
                 new_note_id = extract_note_id(note_url)
@@ -1968,7 +2144,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                     })
                     log(f"  - 找到的地址没有笔记ID，保持原值: {note_url}")
                     register_processing_outcome(False, row_idx=row_idx, reason="地址没有笔记ID")
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
 
                 rows_data[row_idx - 2][NOTE_URL_HEADER] = note_url
@@ -1979,9 +2155,9 @@ def update_note_urls_csv(args, csv_path, output_path):
                 log(f"  - 已更新: {note_url} {id_note}")
                 log(f"  - [结果汇总] 行{row_idx} 成功 | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
                 register_processing_outcome(True, row_idx=row_idx)
-                finish_session_item()
+                finish_session_item(item_start_time, index)
 
-                if args.save_every and updated % args.save_every == 0:
+                if save_every and updated % save_every == 0:
                     save_csv(rows_data, output_path, list(headers.keys()), original_csv_path=csv_path)
                     log(f"  - 已保存进度: {output_path}")
         except KeyboardInterrupt:
@@ -2095,6 +2271,11 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
 
     items = build_rows(ws, headers, rows)
     url_col = headers[NOTE_URL_HEADER]
+    apply_speed_profile_for_large_batch(
+        len(items),
+        session_mode=getattr(args, "session_mode", "rotate"),
+        speed_mode=getattr(args, "speed_mode", "auto"),
+    )
 
     if os.path.abspath(excel_path) == os.path.abspath(output_path):
         backup_path = make_backup(excel_path)
@@ -2133,8 +2314,17 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
     actual_output_path = output_path
     failed_items = []
     reset_pace_state()
+    detail_wait_ms = get_effective_detail_wait_ms(args)
+    max_scrolls = get_effective_max_scrolls(args)
+    per_item_timeout_sec = get_effective_per_item_timeout(args)
+    batch_size, batch_interval = get_effective_batch_pause(args)
+    save_every = get_effective_save_every(args)
     session_mode = getattr(args, 'session_mode', 'rotate')
+    multi_session_fixed_rotate = session_mode == "rotate" and len(session_dirs) > 1
     session_batch_min, session_batch_max, session_switch_rest_min, session_switch_rest_max = get_session_rotation_settings(args)
+    if multi_session_fixed_rotate:
+        batch_size = 0
+        batch_interval = 0
 
     with sync_playwright() as p:
         contexts = []
@@ -2152,7 +2342,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
             context = p.chromium.launch_persistent_context(
                 user_data_dir=session_dir,
                 headless=args.headless,
-                slow_mo=args.slow_mo,
+                slow_mo=get_effective_slow_mo(args),
                 viewport=viewport,
             )
             page = context.pages[0] if context.pages else context.new_page()
@@ -2187,27 +2377,46 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                 return
             previous_idx = current_session_idx
             current_session_idx = (current_session_idx + 1) % len(session_dirs)
-            rest_sec = draw_session_switch_rest(session_switch_rest_min, session_switch_rest_max)
+            rest_sec = FIXED_SESSION_SWITCH_REST_SEC if multi_session_fixed_rotate else draw_session_switch_rest(session_switch_rest_min, session_switch_rest_max)
             log(f"  - [切换账号] 账号{previous_idx + 1} 本轮结束，休息 {rest_sec} 秒后切换到账号{current_session_idx + 1}")
             time.sleep(rest_sec)
-            current_session_remaining = draw_session_batch_size(session_batch_min, session_batch_max)
+            current_session_remaining = FIXED_SESSION_BATCH_SIZE if multi_session_fixed_rotate else draw_session_batch_size(session_batch_min, session_batch_max)
             log(f"  - [账号轮换] 账号{current_session_idx + 1} 本轮计划处理 {current_session_remaining} 条")
 
-        def finish_session_item():
-            nonlocal current_session_remaining
+        perf_total_sec = 0.0
+        perf_count = 0
+
+        def finish_session_item(item_start_time=None, item_index=None):
+            nonlocal current_session_remaining, perf_total_sec, perf_count
             if session_mode == "rotate" and len(session_dirs) > 1 and current_session_remaining > 0:
                 current_session_remaining -= 1
+            if item_start_time and item_index:
+                perf_count += 1
+                spent = time.time() - item_start_time
+                perf_total_sec += spent
+                if perf_count == 1 or perf_count % 20 == 0:
+                    avg = perf_total_sec / max(1, perf_count)
+                    remaining = max(0, len(items) - int(item_index))
+                    eta = avg * remaining
+                    log(f"  - [效率] 本条={spent:.1f}s 平均={avg:.1f}s 预计剩余={format_duration(eta)}")
 
         if session_mode == "rotate" and len(session_dirs) > 1:
-            current_session_remaining = draw_session_batch_size(session_batch_min, session_batch_max)
-            log(
-                f"[最稳轮换] 多账号按批次切换：每个账号连续处理 {session_batch_min}-{session_batch_max} 条，"
-                f"切换前休息 {session_switch_rest_min}-{session_switch_rest_max} 秒"
-            )
+            current_session_remaining = FIXED_SESSION_BATCH_SIZE if multi_session_fixed_rotate else draw_session_batch_size(session_batch_min, session_batch_max)
+            if multi_session_fixed_rotate:
+                log(
+                    f"[固定轮换] 多账号单任务顺序执行：每个账号固定处理 {FIXED_SESSION_BATCH_SIZE} 条，"
+                    f"切换前休息 {FIXED_SESSION_SWITCH_REST_SEC} 秒"
+                )
+            else:
+                log(
+                    f"[最稳轮换] 多账号按批次切换：每个账号连续处理 {session_batch_min}-{session_batch_max} 条，"
+                    f"切换前休息 {session_switch_rest_min}-{session_switch_rest_max} 秒"
+                )
             log(f"  - [账号轮换] 账号1 本轮计划处理 {current_session_remaining} 条")
 
         try:
             for index, item in enumerate(items, start=1):
+                item_start_time = time.time()
                 row_idx = item["row"]
                 title = item["title"]
                 homepage_url = item["homepage_url"]
@@ -2223,8 +2432,6 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                 if index > 1:
                     apply_between_item_pacing()
                 
-                batch_size = getattr(args, 'batch_size', 0)
-                batch_interval = getattr(args, 'batch_interval', 30)
                 if batch_size > 0 and index > 1 and (index - 1) % batch_size == 0:
                     log(f"  - [批次休息] 已处理 {index - 1} 条，休息 {batch_interval} 秒避免风控...")
                     time.sleep(batch_interval)
@@ -2242,20 +2449,20 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     })
                     log("  - 跳过：笔记无标题，无法匹配")
                     register_processing_outcome(True, row_idx=row_idx)
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
                 
                 if not title or not homepage_url:
                     skipped += 1
                     log("  - 跳过：标题或主页链接为空")
                     register_processing_outcome(True, row_idx=row_idx)
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
                 if args.only_empty and not is_blank(old_url):
                     skipped += 1
                     log("  - 跳过：笔记官方地址已有内容")
                     register_processing_outcome(True, row_idx=row_idx)
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
 
                 try:
@@ -2263,11 +2470,11 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         page,
                         homepage_url,
                         title,
-                        max_scrolls=args.max_scrolls,
+                        max_scrolls=max_scrolls,
                         scroll_pixels=args.scroll_pixels,
-                        detail_wait_ms=args.detail_wait_ms,
+                        detail_wait_ms=detail_wait_ms,
                         require_xsec_token=not args.allow_basic_url,
-                        per_item_timeout_sec=args.per_item_timeout,
+                        per_item_timeout_sec=per_item_timeout_sec,
                         target_date=target_date,
                         note_id_hint=old_note_id,
                     )
@@ -2283,7 +2490,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     })
                     log(f"  - 查找超时: {exc}")
                     register_processing_outcome(False, row_idx=row_idx, reason="查找超时")
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
                 except Exception as exc:
                     note_url = ""
@@ -2297,7 +2504,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     })
                     log(f"  - 查找失败: {exc}")
                     register_processing_outcome(False, row_idx=row_idx, reason="查找失败")
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
 
                 if not note_url:
@@ -2313,7 +2520,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     log(f"  - 未找到匹配笔记 (原地址有笔记ID={old_url_has_note_id}), 保持原值")
                     log(f"  - [结果汇总] 行{row_idx} 失败(未找到匹配) | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
                     register_processing_outcome(False, row_idx=row_idx, reason="未找到匹配笔记")
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
 
                 new_note_id = extract_note_id(note_url)
@@ -2328,7 +2535,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     })
                     log(f"  - 找到的地址没有笔记ID，保持原值: {note_url}")
                     register_processing_outcome(False, row_idx=row_idx, reason="地址没有笔记ID")
-                    finish_session_item()
+                    finish_session_item(item_start_time, index)
                     continue
 
                 ws.cell(row=row_idx, column=url_col).value = note_url
@@ -2339,9 +2546,9 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                 log(f"  - 已更新: {note_url} {id_note}")
                 log(f"  - [结果汇总] 行{row_idx} 成功 | 累计: 更新={updated} 失败={failed} 跳过={skipped}", level="debug")
                 register_processing_outcome(True, row_idx=row_idx)
-                finish_session_item()
+                finish_session_item(item_start_time, index)
 
-                if args.save_every and updated % args.save_every == 0:
+                if save_every and updated % save_every == 0:
                     actual_output_path = save_workbook(wb, actual_output_path)
                     log(f"  - 已保存进度: {actual_output_path}")
         except KeyboardInterrupt:
@@ -2396,11 +2603,11 @@ def build_arg_parser():
     parser.add_argument("--rows", default="", help="行号，如 2 / 2-20 / 2,5,9-12；留空处理全部数据行")
     parser.add_argument("--limit", type=int, default=0, help="最多处理多少行，调试用")
     parser.add_argument("--only-empty", action="store_true", help="只处理笔记官方地址为空的行")
-    parser.add_argument("--max-scrolls", type=int, default=15, help="每个主页最多向下滚动次数，默认 15")
+    parser.add_argument("--max-scrolls", type=int, default=12, help="每个主页最多向下滚动次数，默认 12")
     parser.add_argument("--scroll-pixels", type=int, default=900, help="每次滚动像素")
     parser.add_argument("--detail-wait-ms", type=int, default=8000, help="点击笔记后等待地址栏变化的毫秒数")
-    parser.add_argument("--per-item-timeout", type=int, default=20, help="每条数据的最大处理时间（秒），超时后跳过")
-    parser.add_argument("--save-every", type=int, default=20, help="每更新多少行保存一次，0 表示只最后保存")
+    parser.add_argument("--per-item-timeout", type=int, default=15, help="每条数据的最大处理时间（秒），超时后跳过")
+    parser.add_argument("--save-every", type=int, default=20, help="每更新多少行保存一次，0 表示只最后保存；turbo 默认会自动关闭过程保存")
     parser.add_argument("--login-wait", type=int, default=50, help="启动浏览器后等待登录/页面准备的秒数，默认 50")
     parser.add_argument("--allow-basic-url", action="store_true", help="没有 xsec_token 时允许写入基础 explore 地址")
     parser.add_argument("--headless", action="store_true", help="无头模式运行，不建议首次使用")
@@ -2412,10 +2619,11 @@ def build_arg_parser():
     parser.add_argument("--skip-no-title", action="store_true", default=True, help="跳过无标题笔记（默认开启）")
     parser.add_argument("--no-skip-no-title", action="store_true", help="不跳过无标题笔记")
     parser.add_argument("--target-date", default=default_target_date, help=f"目标日期（格式：MM.DD），默认 {default_target_date}（当前日期往前推3天）")
-    parser.add_argument("--batch-size", type=int, default=30, help="每处理多少条后休息一次，0表示不休息，默认30")
-    parser.add_argument("--batch-interval", type=int, default=30, help="批次休息秒数，默认30")
+    parser.add_argument("--batch-size", type=int, default=100, help="每处理多少条后休息一次，0表示不休息，默认100")
+    parser.add_argument("--batch-interval", type=int, default=120, help="批次休息秒数，默认120")
     parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，多账号场景下推荐按批次轮换")
     parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=账号按批次轮换(推荐), bind=每个任务使用分配到的账号组")
+    parser.add_argument("--speed-mode", choices=["auto", "default", "turbo"], default="auto", help="速度模式: auto=大批量自动提速(默认), default=不提速, turbo=优先提速(轻风控)")
     parser.add_argument("--session-batch-min", type=int, default=ANTI_DETECTION_CONFIG["session_batch_min"], help="轮换模式下单账号最少连续处理多少条，默认10")
     parser.add_argument("--session-batch-max", type=int, default=ANTI_DETECTION_CONFIG["session_batch_max"], help="轮换模式下单账号最多连续处理多少条，默认15")
     parser.add_argument("--session-switch-rest-min", type=int, default=ANTI_DETECTION_CONFIG["session_switch_rest_min_sec"], help="轮换模式下切账号前最少休息秒数，默认60")

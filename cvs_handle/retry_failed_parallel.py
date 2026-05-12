@@ -301,6 +301,7 @@ def main():
     parser.add_argument("--batch-interval", type=int, default=30, help="批次休息秒数，默认30")
     parser.add_argument("--sessions", default="", help="多个session目录，用逗号分隔，如 session1,session2,session3")
     parser.add_argument("--session-mode", choices=["rotate", "bind"], default="rotate", help="账号模式: rotate=轮询(每条数据切换账号), bind=绑定(每个任务一个账号)")
+    parser.add_argument("--speed-mode", choices=["auto", "default", "turbo"], default="auto", help="速度模式: auto=自动, default=保守, turbo=极速")
     args = parser.parse_args()
 
     skip_no_title = args.skip_no_title and not args.no_skip_no_title
@@ -435,6 +436,8 @@ def main():
             command.extend(["--sessions", args.sessions])
         if args.session_mode:
             command.extend(["--session-mode", args.session_mode])
+        if args.speed_mode:
+            command.extend(["--speed-mode", args.speed_mode])
 
         print(f"[任务 {i + 1}] 启动，处理 {len(chunks[i])} 条数据...", flush=True)
 
