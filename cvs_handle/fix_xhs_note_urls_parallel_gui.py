@@ -117,7 +117,7 @@ class ParallelNoteUrlFixerApp:
 
         ttk.Label(settings, text="行号").grid(row=1, column=0, sticky="w", pady=(12, 0))
         ttk.Entry(settings, textvariable=self.rows_var).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(12, 0))
-        ttk.Label(settings, text="留空处理全部；支持 2 / 2-20 / 2,5,9-12").grid(
+        ttk.Label(settings, text="留空处理全部；支持 2 / 2-20 / 2,5,9-12；CSV按文件行号计，表头=1，数据从2开始").grid(
             row=2, column=1, sticky="w", padx=(8, 0), pady=(4, 0)
         )
 
@@ -538,8 +538,13 @@ class ParallelNoteUrlFixerApp:
 
     def _stop_run(self):
         if self.process and self.process.poll() is None:
-            kill_process_tree(self.process.pid)
-            self._append_log("\n已停止所有进程。\n")
+            self.process.terminate()
+            self._append_log("\n正在停止（请等待保存已处理数据）...\n")
+            try:
+                self.process.wait(timeout=15)
+            except Exception:
+                self._append_log("等待超时，强制终止进程树。\n")
+                kill_process_tree(self.process.pid)
 
     def _set_running(self, running):
         self.run_button.configure(state="disabled" if running else "normal")
@@ -625,7 +630,11 @@ class ParallelNoteUrlFixerApp:
             confirmed = messagebox.askyesno("确认退出", "脚本还在运行，确定关闭窗口吗？")
             if not confirmed:
                 return
-            kill_process_tree(self.process.pid)
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=15)
+            except Exception:
+                kill_process_tree(self.process.pid)
         self.root.destroy()
 
 

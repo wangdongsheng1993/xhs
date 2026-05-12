@@ -176,7 +176,7 @@ def parse_note_date(date_str, current_year=None):
         from datetime import timedelta
         return (today - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
     
-    match = re.search(r"(\d{1,2})[-月/](\d{1,2})", date_str)
+    match = re.search(r"(\d{1,2})[-月/.](\d{1,2})", date_str)
     if match:
         month = int(match.group(1))
         day = int(match.group(2))
@@ -185,6 +185,37 @@ def parse_note_date(date_str, current_year=None):
         except ValueError:
             return None
     
+    return None
+
+
+def parse_target_date(value, now=None):
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    base = now or datetime.now()
+    normalized = (
+        text.replace("年", "-")
+        .replace("月", "-")
+        .replace("日", "")
+        .replace("/", "-")
+        .replace(".", "-")
+    )
+    match = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", normalized)
+    if match:
+        year, month, day = match.groups()
+        try:
+            return datetime(int(year), int(month), int(day))
+        except ValueError:
+            return None
+    match = re.fullmatch(r"(\d{1,2})-(\d{1,2})", normalized)
+    if match:
+        month, day = match.groups()
+        try:
+            return datetime(base.year, int(month), int(day))
+        except ValueError:
+            return None
     return None
 
 
@@ -349,25 +380,60 @@ def goto_with_retry(page, url, timeout_ms=45000, retries=2):
 def click_notes_tab_if_visible(page):
     selectors = [
         "[role='tab']",
+        "[role='tablist'] [role='tab']",
         ".reds-tabs-list .tab",
         ".user-tabs .tab",
         ".tabs-list .tab",
+        "button:has-text('笔记')",
+        "a:has-text('笔记')",
+        "div:has-text('笔记')",
+        "span:has-text('笔记')",
+        "text=笔记",
     ]
+    best_tab = None
+    best_box = None
     for selector in selectors:
         try:
             tabs = page.locator(selector).filter(has_text="笔记")
-            count = min(tabs.count(), 3)
+            count = min(tabs.count(), 6)
             if count > 0:
                 log(f"  - [笔记Tab] 选择器 '{selector}' 找到 {count} 个匹配")
             for index in range(count):
                 tab = tabs.nth(index)
-                if tab.is_visible(timeout=500):
-                    tab.click(timeout=1500)
-                    page.wait_for_timeout(800)
-                    log(f"  - [笔记Tab] 已点击选择器 '{selector}' 第{index}个tab")
-                    return True
+                if not tab.is_visible(timeout=300):
+                    continue
+                box = None
+                try:
+                    handle = tab.element_handle()
+                    if handle:
+                        box = handle.bounding_box()
+                except Exception:
+                    box = None
+                if not box:
+                    try:
+                        tab.click(timeout=1500)
+                        page.wait_for_timeout(800)
+                        log(f"  - [笔记Tab] 已点击选择器 '{selector}' 第{index}个tab")
+                        return True
+                    except Exception:
+                        continue
+                if box.get("height", 0) <= 0 or box.get("width", 0) <= 0:
+                    continue
+                if box.get("y", 0) > 700 or box.get("height", 0) > 120 or box.get("width", 0) > 320:
+                    continue
+                if not best_box or (box["y"], box["x"]) < (best_box["y"], best_box["x"]):
+                    best_tab = tab
+                    best_box = box
         except Exception as exc:
             log(f"  - [笔记Tab] 选择器 '{selector}' 查找/点击异常: {exc}")
+    if best_tab:
+        try:
+            best_tab.click(timeout=1500)
+            page.wait_for_timeout(800)
+            log(f"  - [笔记Tab] 已点击(最佳匹配) 坐标=({best_box.get('x',0):.0f},{best_box.get('y',0):.0f}) 尺寸={best_box.get('width',0):.0f}x{best_box.get('height',0):.0f}")
+            return True
+        except Exception as exc:
+            log(f"  - [笔记Tab] 点击最佳匹配失败: {exc}")
     log(f"  - [笔记Tab] 未找到可见的笔记Tab (尝试了 {len(selectors)} 个选择器)")
     return False
 
@@ -582,6 +648,117 @@ def find_note_candidate(page, title):
             log(f"  - [查找卡片] 候选排名: {scores_desc}")
         return best
     log(f"  - [查找卡片] JS执行返回空, 目标标题={target[:40]}")
+    return None
+
+
+def find_note_candidate_by_note_id(page, note_id):
+    note_id = str(note_id or "").strip()
+    if not note_id:
+        return None
+    result = page.evaluate(
+        """
+        ({ noteId }) => {
+            const cleanHref = (href) => {
+                if (!href) return '';
+                try {
+                    return new URL(href, location.href).href;
+                } catch (error) {
+                    return href;
+                }
+            };
+            const matchesNoteId = (href) => {
+                const value = cleanHref(href);
+                return value.includes(`/explore/${noteId}`) || value.includes(`/${noteId}?`) || value.endsWith(`/${noteId}`);
+            };
+            const extractNoteId = (href) => {
+                const value = cleanHref(href);
+                const match = value.match(/\\/explore\\/([^/?#]+)/)
+                    || value.match(/\\/user\\/profile\\/[^/?#]+\\/([^/?#]+)/);
+                return match ? match[1] : '';
+            };
+            const isClickableProfileCardHref = (href) => {
+                const value = cleanHref(href);
+                return value.includes('/user/profile/')
+                    && value.includes('xsec_source=pc_user')
+                    && value.includes('xsec_token=')
+                    && !value.includes('xsec_token=&');
+            };
+            const isClickableCandidateHref = (href) => {
+                const extracted = extractNoteId(href);
+                return Boolean(extracted && extracted.length >= 8) || isClickableProfileCardHref(href);
+            };
+            const findClickableNode = (anchor) => {
+                const selectors = [
+                    '.note-item',
+                    '.note-card',
+                    '.note-card-wrapper',
+                    '.feeds-page .note-item',
+                    '[class*="note-item"]',
+                    '[class*="note-card"]',
+                    '[class*="cover"]',
+                    '[class*="card"]',
+                ];
+                for (const selector of selectors) {
+                    const node = anchor.closest(selector);
+                    if (!node) continue;
+                    const rect = node.getBoundingClientRect();
+                    if (rect.width >= 80 && rect.height >= 80) return node;
+                }
+                return anchor;
+            };
+            const buildCandidate = (anchor) => {
+                const href = cleanHref(anchor.getAttribute('href') || anchor.href);
+                const clickable = findClickableNode(anchor);
+                const rect = clickable.getBoundingClientRect();
+                const anchorRect = anchor.getBoundingClientRect();
+                const targetRect = rect.width >= 20 && rect.height >= 20 ? rect : anchorRect;
+                let score = 110;
+                if (href.includes('xsec_token=')) score += 10;
+                if (href.includes('xsec_source=pc_user')) score += 5;
+                return {
+                    href,
+                    noteId: extractNoteId(href),
+                    text: (anchor.innerText || anchor.textContent || '').trim(),
+                    score,
+                    x: targetRect.left + targetRect.width / 2,
+                    y: targetRect.top + Math.min(targetRect.height * 0.42, targetRect.height / 2),
+                    width: targetRect.width,
+                    height: targetRect.height,
+                };
+            };
+            const anchors = Array.from(document.querySelectorAll('a[href*="/explore/"], a[href*="/user/profile/"]'))
+                .filter((a) => {
+                    const href = a.getAttribute('href') || a.href || '';
+                    if (!matchesNoteId(href)) return false;
+                    if (!isClickableCandidateHref(href)) return false;
+                    const rect = a.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                });
+            const candidates = anchors.map(buildCandidate);
+            candidates.sort((l, r) => r.score - l.score);
+            const best = candidates[0] || null;
+            return {
+                best,
+                totalAnchors: anchors.length,
+                topScores: candidates.slice(0, 5).map((c) => ({ score: c.score, noteId: c.noteId, href: (c.href || '').substring(0, 80) })),
+            };
+        }
+        """,
+        {"noteId": note_id},
+    )
+    if result:
+        best = result.get("best")
+        total_anchors = result.get("totalAnchors", 0)
+        top_scores = result.get("topScores", [])
+        if best:
+            log(f"  - [查找卡片] 按noteId找到: noteId={note_id} score={best.get('score', 0)} href={normalize_note_url(best.get('href', ''))[:80]} 坐标=({best.get('x', 0):.0f},{best.get('y', 0):.0f}) 尺寸={best.get('width', 0):.0f}x{best.get('height', 0):.0f}")
+        else:
+            log(f"  - [查找卡片] 按noteId未找到: noteId={note_id} 候选锚点数={total_anchors}")
+        if top_scores:
+            scores_desc = ", ".join(f"[score={s['score']} noteId={s['noteId']} href={s['href'][:30]}]" for s in top_scores)
+            log(f"  - [查找卡片] noteId候选: {scores_desc}")
+        return best
+    log(f"  - [查找卡片] 按noteId JS执行返回空: noteId={note_id}")
     return None
 
 
@@ -1186,15 +1363,22 @@ def locate_note_url(
     require_xsec_token=True,
     per_item_timeout_sec=20,
     target_date=None,
+    note_id_hint=None,
 ):
     homepage_url = normalize_homepage_url(homepage_url)
     target_date_str = target_date.strftime("%Y-%m-%d") if target_date else "未设置"
-    log(f"  - [定位流程] 开始: 主页={homepage_url} 查找标题={title[:40]} max_scrolls={max_scrolls} detail_wait_ms={detail_wait_ms} require_xsec_token={require_xsec_token} per_item_timeout={per_item_timeout_sec}s target_date={target_date_str}")
-    start_time = time.time()
-    goto_with_retry(page, homepage_url)
+    note_id_hint = str(note_id_hint or "").strip() or None
+    log(f"  - [定位流程] 开始: 主页={homepage_url} 查找标题={title[:40]} noteIdHint={note_id_hint or '无'} max_scrolls={max_scrolls} detail_wait_ms={detail_wait_ms} require_xsec_token={require_xsec_token} per_item_timeout={per_item_timeout_sec}s target_date={target_date_str}")
+    nav_start = time.time()
+    goto_timeout_ms = 45000
+    if per_item_timeout_sec and per_item_timeout_sec > 0:
+        goto_timeout_ms = min(45000, max(15000, int(per_item_timeout_sec * 1000)))
+    goto_with_retry(page, homepage_url, timeout_ms=goto_timeout_ms, retries=1 if per_item_timeout_sec and per_item_timeout_sec <= 30 else 2)
     page.wait_for_timeout(random.randint(1500, 2500))
     warm_up_mode = choose_warmup_mode(page, homepage_url)
     warm_up_page(page, mode=warm_up_mode)
+    nav_elapsed = time.time() - nav_start
+    log(f"  - [定位流程] 导航耗时: {nav_elapsed:.1f}s (goto_timeout_ms={goto_timeout_ms})", level="debug")
     
     page_status = page.evaluate("""
     () => {
@@ -1229,6 +1413,7 @@ def locate_note_url(
     except Exception:
         log(f"  - [定位流程] 等待页面元素超时，继续尝试查找")
 
+    search_start = time.time()
     last_height = 0
     no_change_count = 0
     max_no_change = 3
@@ -1238,7 +1423,7 @@ def locate_note_url(
     debug_dumped = False
 
     for scroll_index in range(max_scrolls + 1):
-        elapsed = time.time() - start_time
+        elapsed = time.time() - search_start
         if elapsed > per_item_timeout_sec:
             log(f"  - [定位流程] 已超时 ({elapsed:.1f}秒 > {per_item_timeout_sec}秒)，停止查找 (已滚动{scroll_count}次)")
             return ""
@@ -1291,7 +1476,11 @@ def locate_note_url(
             except Exception as exc:
                 log(f"  - [调试] 获取页面卡片信息失败: {exc}")
 
-        candidate = find_note_candidate(page, title)
+        candidate = None
+        if note_id_hint:
+            candidate = find_note_candidate_by_note_id(page, note_id_hint)
+        if not candidate:
+            candidate = find_note_candidate(page, title)
         if candidate and candidate.get("href"):
             log(f"  - [定位流程] 滚动第{scroll_index}次: 找到候选 score={candidate.get('score', 0)} href={normalize_note_url(candidate['href'])[:80]}")
             href = normalize_note_url(candidate["href"])
@@ -1369,7 +1558,7 @@ def locate_note_url(
                         const els = document.querySelectorAll(sel);
                         for (const el of els) {
                             const txt = (el.innerText || el.textContent || '').trim();
-                            if (txt && /\\d{1,2}[-月/]\\d{1,2}/.test(txt)) {
+                            if (txt && /\\d{1,2}[-月\\/.]\\d{1,2}/.test(txt)) {
                                 dates.push(txt);
                             }
                         }
@@ -1415,11 +1604,27 @@ def locate_note_url(
             no_change_count = 0
         last_height = next_height
 
-    total_elapsed = time.time() - start_time
+    total_elapsed = time.time() - search_start
     if early_stop_due_to_date:
         log(f"  - [定位流程] 失败(日期早于目标): 滚动{scroll_count}次后未找到匹配卡片, 耗时{total_elapsed:.1f}s, title={title[:40]}")
     else:
         log(f"  - [定位流程] 失败: 滚动{scroll_count}次后未找到匹配卡片, 耗时{total_elapsed:.1f}s, title={title[:40]}")
+    if note_id_hint:
+        try:
+            direct_url = f"https://www.xiaohongshu.com/explore/{note_id_hint}"
+            log(f"  - [定位流程] 回退：尝试直接打开笔记ID: {note_id_hint}", level="debug")
+            goto_with_retry(page, direct_url, timeout_ms=min(30000, goto_timeout_ms), retries=0)
+            resolved_url = wait_for_current_note_url(
+                page,
+                expected_note_id=note_id_hint,
+                timeout_ms=detail_wait_ms,
+                require_xsec_token=require_xsec_token,
+            )
+            if resolved_url:
+                log(f"  - [定位流程] 回退成功(直达笔记): {resolved_url}")
+                return resolved_url
+        except Exception as exc:
+            log(f"  - [定位流程] 回退失败(直达笔记): {exc}", level="debug")
     return ""
 
 
@@ -1492,15 +1697,9 @@ def update_note_urls_csv(args, csv_path, output_path):
     
     target_date = None
     if args.target_date:
-        try:
-            if "-" in args.target_date:
-                parts = args.target_date.split("-")
-                if len(parts) == 3:
-                    target_date = datetime(int(parts[0]), int(parts[1]), int(parts[2]))
-                elif len(parts) == 2:
-                    target_date = datetime(datetime.now().year, int(parts[0]), int(parts[1]))
-        except Exception as e:
-            log(f"警告: 无法解析目标日期 '{args.target_date}': {e}")
+        target_date = parse_target_date(args.target_date)
+        if not target_date:
+            log(f"警告: 无法解析目标日期 '{args.target_date}'")
     
     with open(csv_path, "r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
@@ -1510,7 +1709,7 @@ def update_note_urls_csv(args, csv_path, output_path):
     require_headers(headers, [TITLE_HEADER, HOMEPAGE_HEADER, NOTE_URL_HEADER])
 
     total_rows = len(rows_data)
-    all_row_indices = list(range(2, total_rows + 2))  # CSV 数据行号从2开始（1是表头）
+    all_row_indices = parse_rows_spec(args.rows, 2, total_rows + 1)  # CSV 数据行号从2开始（1是表头）
     if args.limit:
         all_row_indices = all_row_indices[: args.limit]
     if not all_row_indices:
@@ -1710,6 +1909,7 @@ def update_note_urls_csv(args, csv_path, output_path):
                         require_xsec_token=not args.allow_basic_url,
                         per_item_timeout_sec=args.per_item_timeout,
                         target_date=target_date,
+                        note_id_hint=old_note_id,
                     )
                 except PlaywrightTimeoutError as exc:
                     note_url = ""
@@ -1868,15 +2068,9 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
     
     target_date = None
     if args.target_date:
-        try:
-            if "-" in args.target_date:
-                parts = args.target_date.split("-")
-                if len(parts) == 3:
-                    target_date = datetime(int(parts[0]), int(parts[1]), int(parts[2]))
-                elif len(parts) == 2:
-                    target_date = datetime(datetime.now().year, int(parts[0]), int(parts[1]))
-        except Exception as e:
-            log(f"警告: 无法解析目标日期 '{args.target_date}': {e}")
+        target_date = parse_target_date(args.target_date)
+        if not target_date:
+            log(f"警告: 无法解析目标日期 '{args.target_date}'")
     
     wb = load_workbook(excel_path)
     if sheet_name not in wb.sheetnames:
@@ -2075,6 +2269,7 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                         require_xsec_token=not args.allow_basic_url,
                         per_item_timeout_sec=args.per_item_timeout,
                         target_date=target_date,
+                        note_id_hint=old_note_id,
                     )
                 except PlaywrightTimeoutError as exc:
                     note_url = ""
@@ -2160,8 +2355,15 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     ctx.close()
                 except Exception:
                     pass
+            if updated > 0 or skipped > 0 or failed > 0:
+                try:
+                    actual_output_path = save_workbook(wb, actual_output_path)
+                    log(f"  - [停止保护] 强制退出前已保存 {updated} 条更新到: {actual_output_path}")
+                except Exception:
+                    pass
 
-    actual_output_path = save_workbook(wb, actual_output_path)
+    if updated > 0 or skipped > 0 or failed > 0:
+        actual_output_path = save_workbook(wb, actual_output_path)
     log("\n处理完成。")
     log(f"更新: {updated}，跳过: {skipped}，失败: {failed}")
     log(f"结果文件: {actual_output_path}")

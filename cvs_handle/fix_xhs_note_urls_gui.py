@@ -302,6 +302,10 @@ class NoteUrlFixerApp:
             if not confirmed:
                 return
             self.process.terminate()
+            try:
+                self.process.wait(timeout=15)
+            except Exception:
+                self.process.kill()
         self.root.destroy()
 
 
