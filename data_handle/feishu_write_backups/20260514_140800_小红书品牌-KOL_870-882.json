@@ -1,0 +1,1453 @@
+{
+  "created_at": "2026-05-14 14:08:00",
+  "source": "https://mv21kbvltn.feishu.cn/wiki/PzBaw9C66iZtRFkPvfbcVCDqnBb",
+  "excel_path": "C:\\code_20251212\\AI\\xhs\\data_handle\\【内部深演智能】老板电器C5 提号表_品牌.xlsx",
+  "sheet_name": "小红书品牌-KOL",
+  "sheet_id": "Z5aXsY",
+  "rows": [
+    870,
+    871,
+    872,
+    873,
+    874,
+    875,
+    876,
+    877,
+    878,
+    879,
+    880,
+    881,
+    882
+  ],
+  "count": 192,
+  "items": [
+    {
+      "row": 871,
+      "field": "主页链接",
+      "cell": "G871",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/666142dc00000000070059bf",
+          "text": "https://www.xiaohongshu.com/user/profile/666142dc00000000070059bf",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/666142dc00000000070059bf"
+    },
+    {
+      "row": 871,
+      "field": "ID",
+      "cell": "H871",
+      "old_value": "",
+      "new_value": "11624185246"
+    },
+    {
+      "row": 871,
+      "field": "KOL类型",
+      "cell": "I871",
+      "old_value": "",
+      "new_value": "文化艺术"
+    },
+    {
+      "row": 871,
+      "field": "量级",
+      "cell": "J871",
+      "old_value": "",
+      "new_value": "尾部"
+    },
+    {
+      "row": 871,
+      "field": "粉丝量（w）",
+      "cell": "K871",
+      "old_value": "",
+      "new_value": 4.2
+    },
+    {
+      "row": 871,
+      "field": "赞藏量（w）",
+      "cell": "L871",
+      "old_value": "",
+      "new_value": 30.3
+    },
+    {
+      "row": 871,
+      "field": "平台价格",
+      "cell": "M871",
+      "old_value": 12000,
+      "new_value": 12000
+    },
+    {
+      "row": 871,
+      "field": "合作形式",
+      "cell": "Q871",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 871,
+      "field": "女粉占比",
+      "cell": "R871",
+      "old_value": "",
+      "new_value": 0.513223
+    },
+    {
+      "row": 871,
+      "field": "18-24年龄占比",
+      "cell": "S871",
+      "old_value": "",
+      "new_value": 0.141414
+    },
+    {
+      "row": 871,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T871",
+      "old_value": "",
+      "new_value": 0.4299
+    },
+    {
+      "row": 871,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U871",
+      "old_value": "",
+      "new_value": 0.300699
+    },
+    {
+      "row": 871,
+      "field": "苹果用户占比",
+      "cell": "V871",
+      "old_value": "",
+      "new_value": 0.506419
+    },
+    {
+      "row": 871,
+      "field": "华为用户占比",
+      "cell": "W871",
+      "old_value": "",
+      "new_value": 0.151833
+    },
+    {
+      "row": 871,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X871",
+      "old_value": "",
+      "new_value": 3166
+    },
+    {
+      "row": 871,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y871",
+      "old_value": "",
+      "new_value": 357
+    },
+    {
+      "row": 872,
+      "field": "主页链接",
+      "cell": "G872",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/639c69a5000000002601238d",
+          "text": "https://www.xiaohongshu.com/user/profile/639c69a5000000002601238d",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/639c69a5000000002601238d"
+    },
+    {
+      "row": 872,
+      "field": "ID",
+      "cell": "H872",
+      "old_value": "",
+      "new_value": "panhualong1997"
+    },
+    {
+      "row": 872,
+      "field": "KOL类型",
+      "cell": "I872",
+      "old_value": "",
+      "new_value": "科技数码"
+    },
+    {
+      "row": 872,
+      "field": "量级",
+      "cell": "J872",
+      "old_value": "",
+      "new_value": "尾部"
+    },
+    {
+      "row": 872,
+      "field": "粉丝量（w）",
+      "cell": "K872",
+      "old_value": "",
+      "new_value": 6.1
+    },
+    {
+      "row": 872,
+      "field": "赞藏量（w）",
+      "cell": "L872",
+      "old_value": "",
+      "new_value": 53.9
+    },
+    {
+      "row": 872,
+      "field": "平台价格",
+      "cell": "M872",
+      "old_value": 12000,
+      "new_value": 12000
+    },
+    {
+      "row": 872,
+      "field": "合作形式",
+      "cell": "Q872",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 872,
+      "field": "女粉占比",
+      "cell": "R872",
+      "old_value": "",
+      "new_value": 0.479037
+    },
+    {
+      "row": 872,
+      "field": "18-24年龄占比",
+      "cell": "S872",
+      "old_value": "",
+      "new_value": 0.102721
+    },
+    {
+      "row": 872,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T872",
+      "old_value": "",
+      "new_value": 0.218771
+    },
+    {
+      "row": 872,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U872",
+      "old_value": "",
+      "new_value": 0.27706
+    },
+    {
+      "row": 872,
+      "field": "苹果用户占比",
+      "cell": "V872",
+      "old_value": "",
+      "new_value": 0.196017
+    },
+    {
+      "row": 872,
+      "field": "华为用户占比",
+      "cell": "W872",
+      "old_value": "",
+      "new_value": 0.195795
+    },
+    {
+      "row": 872,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X872",
+      "old_value": "",
+      "new_value": 10552
+    },
+    {
+      "row": 872,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y872",
+      "old_value": "",
+      "new_value": 851
+    },
+    {
+      "row": 873,
+      "field": "主页链接",
+      "cell": "G873",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/5e11eac10000000001002e08",
+          "text": "https://www.xiaohongshu.com/user/profile/5e11eac10000000001002e08",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/5e11eac10000000001002e08"
+    },
+    {
+      "row": 873,
+      "field": "ID",
+      "cell": "H873",
+      "old_value": "",
+      "new_value": "574672835"
+    },
+    {
+      "row": 873,
+      "field": "KOL类型",
+      "cell": "I873",
+      "old_value": "",
+      "new_value": "摄影"
+    },
+    {
+      "row": 873,
+      "field": "量级",
+      "cell": "J873",
+      "old_value": "",
+      "new_value": "尾部"
+    },
+    {
+      "row": 873,
+      "field": "粉丝量（w）",
+      "cell": "K873",
+      "old_value": "",
+      "new_value": 2.4
+    },
+    {
+      "row": 873,
+      "field": "赞藏量（w）",
+      "cell": "L873",
+      "old_value": "",
+      "new_value": 12.3
+    },
+    {
+      "row": 873,
+      "field": "平台价格",
+      "cell": "M873",
+      "old_value": 10800,
+      "new_value": 10800
+    },
+    {
+      "row": 873,
+      "field": "合作形式",
+      "cell": "Q873",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 873,
+      "field": "女粉占比",
+      "cell": "R873",
+      "old_value": "",
+      "new_value": 0.629062
+    },
+    {
+      "row": 873,
+      "field": "18-24年龄占比",
+      "cell": "S873",
+      "old_value": "",
+      "new_value": 0.206105
+    },
+    {
+      "row": 873,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T873",
+      "old_value": "",
+      "new_value": 0.431887
+    },
+    {
+      "row": 873,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U873",
+      "old_value": "",
+      "new_value": 0.257518
+    },
+    {
+      "row": 873,
+      "field": "苹果用户占比",
+      "cell": "V873",
+      "old_value": "",
+      "new_value": 0.476626
+    },
+    {
+      "row": 873,
+      "field": "华为用户占比",
+      "cell": "W873",
+      "old_value": "",
+      "new_value": 0.148701
+    },
+    {
+      "row": 873,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X873",
+      "old_value": "",
+      "new_value": 11559
+    },
+    {
+      "row": 873,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y873",
+      "old_value": "",
+      "new_value": 1705
+    },
+    {
+      "row": 874,
+      "field": "主页链接",
+      "cell": "G874",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/66f59238000000001d030d56",
+          "text": "https://www.xiaohongshu.com/user/profile/66f59238000000001d030d56",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/66f59238000000001d030d56"
+    },
+    {
+      "row": 874,
+      "field": "ID",
+      "cell": "H874",
+      "old_value": "",
+      "new_value": "XulaoshiAI"
+    },
+    {
+      "row": 874,
+      "field": "KOL类型",
+      "cell": "I874",
+      "old_value": "",
+      "new_value": "科技数码"
+    },
+    {
+      "row": 874,
+      "field": "量级",
+      "cell": "J874",
+      "old_value": "",
+      "new_value": "腰部"
+    },
+    {
+      "row": 874,
+      "field": "粉丝量（w）",
+      "cell": "K874",
+      "old_value": "",
+      "new_value": 11.6
+    },
+    {
+      "row": 874,
+      "field": "赞藏量（w）",
+      "cell": "L874",
+      "old_value": "",
+      "new_value": 111.3
+    },
+    {
+      "row": 874,
+      "field": "平台价格",
+      "cell": "M874",
+      "old_value": 35000,
+      "new_value": 35000
+    },
+    {
+      "row": 874,
+      "field": "合作形式",
+      "cell": "Q874",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 874,
+      "field": "女粉占比",
+      "cell": "R874",
+      "old_value": "",
+      "new_value": 0.590246
+    },
+    {
+      "row": 874,
+      "field": "18-24年龄占比",
+      "cell": "S874",
+      "old_value": "",
+      "new_value": 0.184788
+    },
+    {
+      "row": 874,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T874",
+      "old_value": "",
+      "new_value": 0.409867
+    },
+    {
+      "row": 874,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U874",
+      "old_value": "",
+      "new_value": 0.273221
+    },
+    {
+      "row": 874,
+      "field": "苹果用户占比",
+      "cell": "V874",
+      "old_value": "",
+      "new_value": 0.420604
+    },
+    {
+      "row": 874,
+      "field": "华为用户占比",
+      "cell": "W874",
+      "old_value": "",
+      "new_value": 0.189859
+    },
+    {
+      "row": 874,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X874",
+      "old_value": "",
+      "new_value": 22722
+    },
+    {
+      "row": 874,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y874",
+      "old_value": "",
+      "new_value": 3067
+    },
+    {
+      "row": 875,
+      "field": "主页链接",
+      "cell": "G875",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/619ba3c8000000001000e116",
+          "text": "https://www.xiaohongshu.com/user/profile/619ba3c8000000001000e116",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/619ba3c8000000001000e116"
+    },
+    {
+      "row": 875,
+      "field": "ID",
+      "cell": "H875",
+      "old_value": "",
+      "new_value": "6323960165"
+    },
+    {
+      "row": 875,
+      "field": "KOL类型",
+      "cell": "I875",
+      "old_value": "",
+      "new_value": "科技数码"
+    },
+    {
+      "row": 875,
+      "field": "量级",
+      "cell": "J875",
+      "old_value": "",
+      "new_value": "尾部"
+    },
+    {
+      "row": 875,
+      "field": "粉丝量（w）",
+      "cell": "K875",
+      "old_value": "",
+      "new_value": 5
+    },
+    {
+      "row": 875,
+      "field": "赞藏量（w）",
+      "cell": "L875",
+      "old_value": "",
+      "new_value": 32
+    },
+    {
+      "row": 875,
+      "field": "平台价格",
+      "cell": "M875",
+      "old_value": 17000,
+      "new_value": 17000
+    },
+    {
+      "row": 875,
+      "field": "合作形式",
+      "cell": "Q875",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 875,
+      "field": "女粉占比",
+      "cell": "R875",
+      "old_value": "",
+      "new_value": 0.849609
+    },
+    {
+      "row": 875,
+      "field": "18-24年龄占比",
+      "cell": "S875",
+      "old_value": "",
+      "new_value": 0.29376
+    },
+    {
+      "row": 875,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T875",
+      "old_value": "",
+      "new_value": 0.395698
+    },
+    {
+      "row": 875,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U875",
+      "old_value": "",
+      "new_value": 0.111418
+    },
+    {
+      "row": 875,
+      "field": "苹果用户占比",
+      "cell": "V875",
+      "old_value": "",
+      "new_value": 0.494272
+    },
+    {
+      "row": 875,
+      "field": "华为用户占比",
+      "cell": "W875",
+      "old_value": "",
+      "new_value": 0.154252
+    },
+    {
+      "row": 875,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X875",
+      "old_value": "",
+      "new_value": 15150
+    },
+    {
+      "row": 875,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y875",
+      "old_value": "",
+      "new_value": 1179
+    },
+    {
+      "row": 876,
+      "field": "主页链接",
+      "cell": "G876",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/64bb2c95000000001403c24c",
+          "text": "https://www.xiaohongshu.com/user/profile/64bb2c95000000001403c24c",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/64bb2c95000000001403c24c"
+    },
+    {
+      "row": 876,
+      "field": "ID",
+      "cell": "H876",
+      "old_value": "",
+      "new_value": "topbusiness101"
+    },
+    {
+      "row": 876,
+      "field": "KOL类型",
+      "cell": "I876",
+      "old_value": "",
+      "new_value": "职场"
+    },
+    {
+      "row": 876,
+      "field": "量级",
+      "cell": "J876",
+      "old_value": "",
+      "new_value": "尾部"
+    },
+    {
+      "row": 876,
+      "field": "粉丝量（w）",
+      "cell": "K876",
+      "old_value": "",
+      "new_value": 4.1
+    },
+    {
+      "row": 876,
+      "field": "赞藏量（w）",
+      "cell": "L876",
+      "old_value": "",
+      "new_value": 33
+    },
+    {
+      "row": 876,
+      "field": "平台价格",
+      "cell": "M876",
+      "old_value": 30000,
+      "new_value": 30000
+    },
+    {
+      "row": 876,
+      "field": "合作形式",
+      "cell": "Q876",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 876,
+      "field": "女粉占比",
+      "cell": "R876",
+      "old_value": "",
+      "new_value": 0.524038
+    },
+    {
+      "row": 876,
+      "field": "18-24年龄占比",
+      "cell": "S876",
+      "old_value": "",
+      "new_value": 0.104587
+    },
+    {
+      "row": 876,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T876",
+      "old_value": "",
+      "new_value": 0.403601
+    },
+    {
+      "row": 876,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U876",
+      "old_value": "",
+      "new_value": 0.329029
+    },
+    {
+      "row": 876,
+      "field": "苹果用户占比",
+      "cell": "V876",
+      "old_value": "",
+      "new_value": 0.564251
+    },
+    {
+      "row": 876,
+      "field": "华为用户占比",
+      "cell": "W876",
+      "old_value": "",
+      "new_value": 0.140052
+    },
+    {
+      "row": 876,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X876",
+      "old_value": "",
+      "new_value": 21360
+    },
+    {
+      "row": 876,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y876",
+      "old_value": "",
+      "new_value": 2183
+    },
+    {
+      "row": 877,
+      "field": "主页链接",
+      "cell": "G877",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/63fc68b60000000029011252",
+          "text": "https://www.xiaohongshu.com/user/profile/63fc68b60000000029011252",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/63fc68b60000000029011252"
+    },
+    {
+      "row": 877,
+      "field": "ID",
+      "cell": "H877",
+      "old_value": "",
+      "new_value": "7499399119"
+    },
+    {
+      "row": 877,
+      "field": "KOL类型",
+      "cell": "I877",
+      "old_value": "",
+      "new_value": "文化艺术"
+    },
+    {
+      "row": 877,
+      "field": "量级",
+      "cell": "J877",
+      "old_value": "",
+      "new_value": "尾部"
+    },
+    {
+      "row": 877,
+      "field": "粉丝量（w）",
+      "cell": "K877",
+      "old_value": "",
+      "new_value": 5.8
+    },
+    {
+      "row": 877,
+      "field": "赞藏量（w）",
+      "cell": "L877",
+      "old_value": "",
+      "new_value": 63.8
+    },
+    {
+      "row": 877,
+      "field": "平台价格",
+      "cell": "M877",
+      "old_value": 25000,
+      "new_value": 25000
+    },
+    {
+      "row": 877,
+      "field": "合作形式",
+      "cell": "Q877",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 877,
+      "field": "女粉占比",
+      "cell": "R877",
+      "old_value": "",
+      "new_value": 0.451935
+    },
+    {
+      "row": 877,
+      "field": "18-24年龄占比",
+      "cell": "S877",
+      "old_value": "",
+      "new_value": 0.210586
+    },
+    {
+      "row": 877,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T877",
+      "old_value": "",
+      "new_value": 0.322687
+    },
+    {
+      "row": 877,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U877",
+      "old_value": "",
+      "new_value": 0.248146
+    },
+    {
+      "row": 877,
+      "field": "苹果用户占比",
+      "cell": "V877",
+      "old_value": "",
+      "new_value": 0.357814
+    },
+    {
+      "row": 877,
+      "field": "华为用户占比",
+      "cell": "W877",
+      "old_value": "",
+      "new_value": 0.183372
+    },
+    {
+      "row": 877,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X877",
+      "old_value": "",
+      "new_value": 29316
+    },
+    {
+      "row": 877,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y877",
+      "old_value": "",
+      "new_value": 914
+    },
+    {
+      "row": 878,
+      "field": "主页链接",
+      "cell": "G878",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/5cde88a5000000001002e796",
+          "text": "https://www.xiaohongshu.com/user/profile/5cde88a5000000001002e796",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/5cde88a5000000001002e796"
+    },
+    {
+      "row": 878,
+      "field": "ID",
+      "cell": "H878",
+      "old_value": "",
+      "new_value": "860366554"
+    },
+    {
+      "row": 878,
+      "field": "KOL类型",
+      "cell": "I878",
+      "old_value": "",
+      "new_value": "科技数码"
+    },
+    {
+      "row": 878,
+      "field": "量级",
+      "cell": "J878",
+      "old_value": "",
+      "new_value": "腰部"
+    },
+    {
+      "row": 878,
+      "field": "粉丝量（w）",
+      "cell": "K878",
+      "old_value": "",
+      "new_value": 17.6
+    },
+    {
+      "row": 878,
+      "field": "赞藏量（w）",
+      "cell": "L878",
+      "old_value": "",
+      "new_value": 138.4
+    },
+    {
+      "row": 878,
+      "field": "平台价格",
+      "cell": "M878",
+      "old_value": 30000,
+      "new_value": 30000
+    },
+    {
+      "row": 878,
+      "field": "合作形式",
+      "cell": "Q878",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 878,
+      "field": "女粉占比",
+      "cell": "R878",
+      "old_value": "",
+      "new_value": 0.591971
+    },
+    {
+      "row": 878,
+      "field": "18-24年龄占比",
+      "cell": "S878",
+      "old_value": "",
+      "new_value": 0.256332
+    },
+    {
+      "row": 878,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T878",
+      "old_value": "",
+      "new_value": 0.35801
+    },
+    {
+      "row": 878,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U878",
+      "old_value": "",
+      "new_value": 0.191121
+    },
+    {
+      "row": 878,
+      "field": "苹果用户占比",
+      "cell": "V878",
+      "old_value": "",
+      "new_value": 0.507619
+    },
+    {
+      "row": 878,
+      "field": "华为用户占比",
+      "cell": "W878",
+      "old_value": "",
+      "new_value": 0.129725
+    },
+    {
+      "row": 878,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X878",
+      "old_value": "",
+      "new_value": 31112
+    },
+    {
+      "row": 878,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y878",
+      "old_value": "",
+      "new_value": 1936
+    },
+    {
+      "row": 879,
+      "field": "主页链接",
+      "cell": "G879",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/616fb3390000000002024e25",
+          "text": "https://www.xiaohongshu.com/user/profile/616fb3390000000002024e25",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/616fb3390000000002024e25"
+    },
+    {
+      "row": 879,
+      "field": "ID",
+      "cell": "H879",
+      "old_value": "",
+      "new_value": "2753195295"
+    },
+    {
+      "row": 879,
+      "field": "KOL类型",
+      "cell": "I879",
+      "old_value": "",
+      "new_value": "科技数码"
+    },
+    {
+      "row": 879,
+      "field": "量级",
+      "cell": "J879",
+      "old_value": "",
+      "new_value": "头部"
+    },
+    {
+      "row": 879,
+      "field": "粉丝量（w）",
+      "cell": "K879",
+      "old_value": "",
+      "new_value": 133.4
+    },
+    {
+      "row": 879,
+      "field": "赞藏量（w）",
+      "cell": "L879",
+      "old_value": "",
+      "new_value": 793.3
+    },
+    {
+      "row": 879,
+      "field": "平台价格",
+      "cell": "M879",
+      "old_value": 32880,
+      "new_value": 32880
+    },
+    {
+      "row": 879,
+      "field": "合作形式",
+      "cell": "Q879",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 879,
+      "field": "女粉占比",
+      "cell": "R879",
+      "old_value": "",
+      "new_value": 0.641114
+    },
+    {
+      "row": 879,
+      "field": "18-24年龄占比",
+      "cell": "S879",
+      "old_value": "",
+      "new_value": 0.268634
+    },
+    {
+      "row": 879,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T879",
+      "old_value": "",
+      "new_value": 0.327725
+    },
+    {
+      "row": 879,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U879",
+      "old_value": "",
+      "new_value": 0.17619
+    },
+    {
+      "row": 879,
+      "field": "苹果用户占比",
+      "cell": "V879",
+      "old_value": "",
+      "new_value": 0.443006
+    },
+    {
+      "row": 879,
+      "field": "华为用户占比",
+      "cell": "W879",
+      "old_value": "",
+      "new_value": 0.184111
+    },
+    {
+      "row": 879,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X879",
+      "old_value": "",
+      "new_value": 112966
+    },
+    {
+      "row": 879,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y879",
+      "old_value": "",
+      "new_value": 7228
+    },
+    {
+      "row": 880,
+      "field": "主页链接",
+      "cell": "G880",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/5fbe2773000000000101d652",
+          "text": "https://www.xiaohongshu.com/user/profile/5fbe2773000000000101d652",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/5fbe2773000000000101d652"
+    },
+    {
+      "row": 880,
+      "field": "ID",
+      "cell": "H880",
+      "old_value": "",
+      "new_value": "WSCSWDD"
+    },
+    {
+      "row": 880,
+      "field": "KOL类型",
+      "cell": "I880",
+      "old_value": "",
+      "new_value": "科技数码"
+    },
+    {
+      "row": 880,
+      "field": "量级",
+      "cell": "J880",
+      "old_value": "",
+      "new_value": "尾部"
+    },
+    {
+      "row": 880,
+      "field": "粉丝量（w）",
+      "cell": "K880",
+      "old_value": "",
+      "new_value": 1.8
+    },
+    {
+      "row": 880,
+      "field": "赞藏量（w）",
+      "cell": "L880",
+      "old_value": "",
+      "new_value": 14.5
+    },
+    {
+      "row": 880,
+      "field": "平台价格",
+      "cell": "M880",
+      "old_value": 21800,
+      "new_value": 21800
+    },
+    {
+      "row": 880,
+      "field": "合作形式",
+      "cell": "Q880",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 880,
+      "field": "女粉占比",
+      "cell": "R880",
+      "old_value": "",
+      "new_value": 0.560604
+    },
+    {
+      "row": 880,
+      "field": "18-24年龄占比",
+      "cell": "S880",
+      "old_value": "",
+      "new_value": 0.246037
+    },
+    {
+      "row": 880,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T880",
+      "old_value": "",
+      "new_value": 0.388494
+    },
+    {
+      "row": 880,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U880",
+      "old_value": "",
+      "new_value": 0.183452
+    },
+    {
+      "row": 880,
+      "field": "苹果用户占比",
+      "cell": "V880",
+      "old_value": "",
+      "new_value": 0.488904
+    },
+    {
+      "row": 880,
+      "field": "华为用户占比",
+      "cell": "W880",
+      "old_value": "",
+      "new_value": 0.146887
+    },
+    {
+      "row": 880,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X880",
+      "old_value": "",
+      "new_value": 8112
+    },
+    {
+      "row": 880,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y880",
+      "old_value": "",
+      "new_value": 547
+    },
+    {
+      "row": 881,
+      "field": "主页链接",
+      "cell": "G881",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/667b861f000000000b032eea",
+          "text": "https://www.xiaohongshu.com/user/profile/667b861f000000000b032eea",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/667b861f000000000b032eea"
+    },
+    {
+      "row": 881,
+      "field": "ID",
+      "cell": "H881",
+      "old_value": "",
+      "new_value": "26550251610"
+    },
+    {
+      "row": 881,
+      "field": "KOL类型",
+      "cell": "I881",
+      "old_value": "",
+      "new_value": "家居家装"
+    },
+    {
+      "row": 881,
+      "field": "量级",
+      "cell": "J881",
+      "old_value": "",
+      "new_value": "腰部"
+    },
+    {
+      "row": 881,
+      "field": "粉丝量（w）",
+      "cell": "K881",
+      "old_value": "",
+      "new_value": 24.9
+    },
+    {
+      "row": 881,
+      "field": "赞藏量（w）",
+      "cell": "L881",
+      "old_value": "",
+      "new_value": 413.5
+    },
+    {
+      "row": 881,
+      "field": "平台价格",
+      "cell": "M881",
+      "old_value": 10634,
+      "new_value": 10634
+    },
+    {
+      "row": 881,
+      "field": "合作形式",
+      "cell": "Q881",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 881,
+      "field": "女粉占比",
+      "cell": "R881",
+      "old_value": "",
+      "new_value": 0.648425
+    },
+    {
+      "row": 881,
+      "field": "18-24年龄占比",
+      "cell": "S881",
+      "old_value": "",
+      "new_value": 0.213709
+    },
+    {
+      "row": 881,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T881",
+      "old_value": "",
+      "new_value": 0.375986
+    },
+    {
+      "row": 881,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U881",
+      "old_value": "",
+      "new_value": 0.250183
+    },
+    {
+      "row": 881,
+      "field": "苹果用户占比",
+      "cell": "V881",
+      "old_value": "",
+      "new_value": 0.524196
+    },
+    {
+      "row": 881,
+      "field": "华为用户占比",
+      "cell": "W881",
+      "old_value": "",
+      "new_value": 0.149001
+    },
+    {
+      "row": 881,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X881",
+      "old_value": "",
+      "new_value": 23771
+    },
+    {
+      "row": 881,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y881",
+      "old_value": "",
+      "new_value": 2311
+    },
+    {
+      "row": 882,
+      "field": "主页链接",
+      "cell": "G882",
+      "old_value": [
+        {
+          "cellPosition": null,
+          "link": "https://www.xiaohongshu.com/user/profile/5b85033f6e68470001debc86",
+          "text": "https://www.xiaohongshu.com/user/profile/5b85033f6e68470001debc86",
+          "type": "url"
+        }
+      ],
+      "new_value": "https://www.xiaohongshu.com/user/profile/5b85033f6e68470001debc86"
+    },
+    {
+      "row": 882,
+      "field": "ID",
+      "cell": "H882",
+      "old_value": "",
+      "new_value": "Hss1128_"
+    },
+    {
+      "row": 882,
+      "field": "KOL类型",
+      "cell": "I882",
+      "old_value": "",
+      "new_value": "文化艺术"
+    },
+    {
+      "row": 882,
+      "field": "量级",
+      "cell": "J882",
+      "old_value": "",
+      "new_value": "腰部"
+    },
+    {
+      "row": 882,
+      "field": "粉丝量（w）",
+      "cell": "K882",
+      "old_value": "",
+      "new_value": 10.1
+    },
+    {
+      "row": 882,
+      "field": "赞藏量（w）",
+      "cell": "L882",
+      "old_value": "",
+      "new_value": 101.6
+    },
+    {
+      "row": 882,
+      "field": "平台价格",
+      "cell": "M882",
+      "old_value": 29000,
+      "new_value": 29000
+    },
+    {
+      "row": 882,
+      "field": "合作形式",
+      "cell": "Q882",
+      "old_value": "",
+      "new_value": "视频"
+    },
+    {
+      "row": 882,
+      "field": "女粉占比",
+      "cell": "R882",
+      "old_value": "",
+      "new_value": 0.565479
+    },
+    {
+      "row": 882,
+      "field": "18-24年龄占比",
+      "cell": "S882",
+      "old_value": "",
+      "new_value": 0.236884
+    },
+    {
+      "row": 882,
+      "field": "25-34年龄占比（不超50%）",
+      "cell": "T882",
+      "old_value": "",
+      "new_value": 0.425666
+    },
+    {
+      "row": 882,
+      "field": "35-44年龄占比（前2）",
+      "cell": "U882",
+      "old_value": "",
+      "new_value": 0.227211
+    },
+    {
+      "row": 882,
+      "field": "苹果用户占比",
+      "cell": "V882",
+      "old_value": "",
+      "new_value": 0.498643
+    },
+    {
+      "row": 882,
+      "field": "华为用户占比",
+      "cell": "W882",
+      "old_value": "",
+      "new_value": 0.130378
+    },
+    {
+      "row": 882,
+      "field": "近30天预估阅读量\n(近30天阅读中位数）",
+      "cell": "X882",
+      "old_value": "",
+      "new_value": 23549
+    },
+    {
+      "row": 882,
+      "field": "近30天互动量\n（近30天互动中位）",
+      "cell": "Y882",
+      "old_value": "",
+      "new_value": 4147
+    }
+  ]
+}

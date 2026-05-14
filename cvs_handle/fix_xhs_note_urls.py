@@ -944,17 +944,21 @@ def check_verification_popup(page, max_wait_sec=120):
                     }
                 }
                 
+                const body = document.body ? (document.body.innerText || '') : '';
                 const loginModal = document.querySelector('.login-modal, [class*="login-modal"], .login-container');
                 const hasLoginModal = loginModal && loginModal.offsetParent !== null;
-                
-                const body = document.body ? (document.body.innerText || '') : '';
+                const hasSecurityVerify = (
+                    (body.includes('保护账号安全') && body.includes('扫码验证身份'))
+                    || (body.includes('小红书') && body.includes('APP') && body.includes('扫码验证'))
+                    || (body.includes('二维码') && body.includes('失效') && body.includes('扫码'))
+                );
                 const hasCaptchaText = (
                     body.includes('请完成验证')
                     || body.includes('请通过验证')
                     || body.includes('滑动验证')
                 ) && hasCaptcha;
                 
-                return { hasCaptcha: hasCaptcha || hasCaptchaText, hasLoginModal };
+                return { hasCaptcha: hasCaptcha || hasCaptchaText || hasSecurityVerify, hasLoginModal, hasSecurityVerify };
             }
             """
         )
@@ -976,7 +980,10 @@ def check_verification_popup(page, max_wait_sec=120):
         maybe_take_risk_cooldown()
 
         if indicators.get("hasCaptcha"):
-            log(f"  - [风控检测] 检测到验证弹窗！请在浏览器中手动完成验证，最多等待 {max_wait_sec} 秒...")
+            if indicators.get("hasSecurityVerify"):
+                log(f"  - [风控检测] 检测到账号安全扫码验证！请用该账号已登录的小红书APP扫码，最多等待 {max_wait_sec} 秒...")
+            else:
+                log(f"  - [风控检测] 检测到验证弹窗！请在浏览器中手动完成验证，最多等待 {max_wait_sec} 秒...")
         if indicators.get("hasLoginModal"):
             log(f"  - [风控检测] 检测到登录弹窗！请在浏览器中完成登录，最多等待 {max_wait_sec} 秒...")
 
@@ -1005,10 +1012,16 @@ def check_verification_popup(page, max_wait_sec=120):
                             }
                         }
                         
+                        const body = document.body ? (document.body.innerText || '') : '';
                         const loginModal = document.querySelector('.login-modal, [class*="login-modal"], .login-container');
                         const hasLoginModal = loginModal && loginModal.offsetParent !== null;
+                        const hasSecurityVerify = (
+                            (body.includes('保护账号安全') && body.includes('扫码验证身份'))
+                            || (body.includes('小红书') && body.includes('APP') && body.includes('扫码验证'))
+                            || (body.includes('二维码') && body.includes('失效') && body.includes('扫码'))
+                        );
                         
-                        return { hasCaptcha, hasLoginModal };
+                        return { hasCaptcha: hasCaptcha || hasSecurityVerify, hasLoginModal };
                     }
                     """
                 )
@@ -1023,11 +1036,11 @@ def check_verification_popup(page, max_wait_sec=120):
             if remaining > 0 and remaining % 10 == 0:
                 log(f"  - [风控检测] 仍在等待验证... 剩余 {remaining} 秒")
 
-        log("  - [风控检测] 验证等待超时，继续执行（可能仍被限制）")
+        log("  - [风控检测] 验证等待超时，当前账号不可用")
         return False
     except Exception as exc:
         log(f"  - [风控检测] 检测异常: {exc}")
-        return True
+        return False
 
 
 def random_delay(min_ms=None, max_ms=None):
@@ -1968,7 +1981,8 @@ def update_note_urls_csv(args, csv_path, output_path):
                 page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
                 page.wait_for_timeout(2000)
                 warm_up_page(page, mode="full")
-                check_verification_popup(page)
+                if not check_verification_popup(page):
+                    raise RuntimeError(f"账号{i+1} 需要完成登录/扫码验证，已停止本任务")
             
             contexts.append(context)
             pages.append(page)
@@ -2045,7 +2059,19 @@ def update_note_urls_csv(args, csv_path, output_path):
                     log(f"  - [批次休息] 已处理 {index - 1} 条，休息 {batch_interval} 秒避免风控...")
                     time.sleep(batch_interval)
                 
-                check_verification_popup(page)
+                if not check_verification_popup(page):
+                    failed += 1
+                    failed_items.append({
+                        "row": row_idx,
+                        "title": title,
+                        "homepage_url": homepage_url,
+                        "old_url": old_url,
+                        "reason": "账号需要完成登录/扫码验证，已停止后续处理",
+                    })
+                    log("  - 账号需要完成登录/扫码验证，停止后续处理")
+                    register_processing_outcome(False, row_idx=row_idx, reason="账号验证未完成")
+                    finish_session_item(item_start_time, index)
+                    break
                 
                 if skip_no_title and ("笔记暂未设置标题" in title or not title):
                     skipped += 1
@@ -2359,7 +2385,8 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                 page.goto(login_url, wait_until="domcontentloaded", timeout=45000)
                 page.wait_for_timeout(2000)
                 warm_up_page(page, mode="full")
-                check_verification_popup(page)
+                if not check_verification_popup(page):
+                    raise RuntimeError(f"账号{i+1} 需要完成登录/扫码验证，已停止本任务")
             
             contexts.append(context)
             pages.append(page)
@@ -2436,7 +2463,19 @@ def update_note_urls_excel(args, excel_path, output_path, sheet_name):
                     log(f"  - [批次休息] 已处理 {index - 1} 条，休息 {batch_interval} 秒避免风控...")
                     time.sleep(batch_interval)
                 
-                check_verification_popup(page)
+                if not check_verification_popup(page):
+                    failed += 1
+                    failed_items.append({
+                        "row": row_idx,
+                        "title": title,
+                        "homepage_url": homepage_url,
+                        "old_url": old_url,
+                        "reason": "账号需要完成登录/扫码验证，已停止后续处理",
+                    })
+                    log("  - 账号需要完成登录/扫码验证，停止后续处理")
+                    register_processing_outcome(False, row_idx=row_idx, reason="账号验证未完成")
+                    finish_session_item(item_start_time, index)
+                    break
                 
                 if skip_no_title and ("笔记暂未设置标题" in title or not title):
                     skipped += 1

@@ -214,8 +214,14 @@ class SessionManagerGUI:
                                 () => {
                                     const body = document.body ? (document.body.innerText || '') : '';
                                     const modal = document.querySelector('.login-modal, [class*="login-modal"], .login-container');
+                                    const securityVerify = (
+                                        (body.includes('保护账号安全') && body.includes('扫码验证身份'))
+                                        || (body.includes('小红书') && body.includes('APP') && body.includes('扫码验证'))
+                                        || (body.includes('二维码') && body.includes('失效') && body.includes('扫码'))
+                                    );
                                     return Boolean(
                                         modal
+                                        || securityVerify
                                         || body.includes('登录即可查看')
                                         || (body.includes('手机号登录') && body.includes('获取验证码'))
                                     );
