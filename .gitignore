@@ -40,5 +40,5 @@ chrome_xhs_profile
 .DS_Store
 Thumbs.db
 
-*.csv
-*.xlsx
+**/*.csv
+**/*.xlsx
