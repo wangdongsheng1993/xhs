@@ -39,3 +39,6 @@ chrome_xhs_profile
 # OS / editor noise
 .DS_Store
 Thumbs.db
+
+*.csv
+*.xlsx
