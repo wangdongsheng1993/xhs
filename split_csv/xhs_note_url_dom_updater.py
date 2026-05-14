@@ -9,6 +9,8 @@ import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from threading import Event
+from typing import Callable
 from urllib.parse import urljoin, urlsplit
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -114,9 +116,14 @@ def is_cdp_ready(port: int) -> bool:
         return False
 
 
-def launch_browser(port: int, profile_dir: Path, start_url: str = "https://www.xiaohongshu.com/explore") -> None:
+def launch_browser(
+    port: int,
+    profile_dir: Path,
+    start_url: str = "https://www.xiaohongshu.com/explore",
+    logger: Callable[[str], None] = log,
+) -> None:
     if is_cdp_ready(port):
-        log(f"浏览器调试端口已可用: {port}")
+        logger(f"浏览器调试端口已可用: {port}")
         return
 
     browser = find_browser_executable()
@@ -129,13 +136,13 @@ def launch_browser(port: int, profile_dir: Path, start_url: str = "https://www.x
         "--no-default-browser-check",
         start_url,
     ]
-    log("启动本机浏览器: " + browser)
+    logger("启动本机浏览器: " + browser)
     subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     deadline = time.time() + 15
     while time.time() < deadline:
         if is_cdp_ready(port):
-            log(f"浏览器已启动，调试端口: {port}")
+            logger(f"浏览器已启动，调试端口: {port}")
             return
         time.sleep(0.5)
     raise RuntimeError(f"浏览器已启动但调试端口 {port} 未就绪，请确认 Chrome/Edge 没有限制远程调试。")
@@ -297,6 +304,8 @@ def update_note_urls(
     skip_existing_xsec: bool,
     interval_sec: int,
     max_scrolls: int,
+    logger: Callable[[str], None] = log,
+    stop_event: Event | None = None,
 ) -> tuple[Path, Path | None]:
     source = source.resolve()
     if not source.exists():
@@ -312,13 +321,14 @@ def update_note_urls(
     failed_path = failed_path_for(output_path)
     failed_rows: list[dict[str, str]] = []
 
-    launch_browser(port, profile_dir)
+    launch_browser(port, profile_dir, logger=logger)
     endpoint = f"http://127.0.0.1:{port}"
 
     updated = 0
     skipped = 0
     failed = 0
     processed_homepages = 0
+    stopped = False
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.connect_over_cdp(endpoint)
@@ -326,6 +336,11 @@ def update_note_urls(
         page = context.pages[0] if context.pages else context.new_page()
 
         for index, row in enumerate(rows, start=2):
+            if stop_event and stop_event.is_set():
+                stopped = True
+                logger("收到停止请求，保存已处理数据后退出。")
+                break
+
             title = str(row.get(TITLE_HEADER, "") or "").strip()
             homepage = str(row.get(HOMEPAGE_HEADER, "") or "").strip()
             old_url = str(row.get(NOTE_URL_HEADER, "") or "").strip()
@@ -338,11 +353,19 @@ def update_note_urls(
                 continue
 
             if processed_homepages > 0 and interval_sec > 0:
-                log(f"等待 {interval_sec} 秒后处理下一条...")
-                time.sleep(interval_sec)
+                logger(f"等待 {interval_sec} 秒后处理下一条...")
+                deadline = time.time() + interval_sec
+                while time.time() < deadline:
+                    if stop_event and stop_event.is_set():
+                        stopped = True
+                        logger("等待期间收到停止请求，保存已处理数据后退出。")
+                        break
+                    time.sleep(min(0.5, max(0, deadline - time.time())))
+                if stopped:
+                    break
             processed_homepages += 1
 
-            log(f"[{index - 1}/{len(rows)}] 第 {index} 行: {title[:60]}")
+            logger(f"[{index - 1}/{len(rows)}] 第 {index} 行: {title[:60]}")
             try:
                 page.goto(normalize_url(homepage), wait_until="domcontentloaded", timeout=45000)
                 page.wait_for_timeout(1800)
@@ -350,7 +373,7 @@ def update_note_urls(
                     reason = "检测到登录/验证提示，请在浏览器中完成后重试"
                     failed += 1
                     failed_rows.append(build_failed_row(index, title, homepage, old_url, reason))
-                    log("  - " + reason)
+                    logger("  - " + reason)
                     continue
                 click_notes_tab_if_visible(page)
                 try:
@@ -361,22 +384,23 @@ def update_note_urls(
                 if note_url:
                     row[NOTE_URL_HEADER] = note_url
                     updated += 1
-                    log(f"  - 已更新: {note_url}")
+                    logger(f"  - 已更新: {note_url}")
                 else:
                     failed += 1
                     failed_rows.append(build_failed_row(index, title, homepage, old_url, reason))
-                    log(f"  - 失败: {reason}")
+                    logger(f"  - 失败: {reason}")
             except Exception as exc:
                 failed += 1
                 reason = f"处理异常: {exc}"
                 failed_rows.append(build_failed_row(index, title, homepage, old_url, reason))
-                log(f"  - 失败: {reason}")
+                logger(f"  - 失败: {reason}")
 
         browser.close()
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     write_csv(output_path, fieldnames, rows)
-    log(f"已保存更新后 CSV: {output_path}")
-    log(f"OUTPUT_CSV: {output_path}")
+    logger(f"已保存更新后 CSV: {output_path}")
+    logger(f"OUTPUT_CSV: {output_path}")
 
     actual_failed_path = None
     if failed_rows:
@@ -385,10 +409,13 @@ def update_note_urls(
             writer.writeheader()
             writer.writerows(failed_rows)
         actual_failed_path = failed_path
-        log(f"失败数据: {failed_path}")
-        log(f"FAILED_CSV: {failed_path}")
+        logger(f"失败数据: {failed_path}")
+        logger(f"FAILED_CSV: {failed_path}")
 
-    log(f"完成: 更新={updated}, 跳过={skipped}, 失败={failed}")
+    if stopped:
+        logger(f"已停止: 更新={updated}, 跳过={skipped}, 失败={failed}")
+    else:
+        logger(f"完成: 更新={updated}, 跳过={skipped}, 失败={failed}")
     return output_path, actual_failed_path
 
 

@@ -33,6 +33,7 @@ data_handle/feishu_download_config.json
 *.tmp
 
 # Excel working files and outputs
+chrome_xhs_profile
 
 
 # OS / editor noise

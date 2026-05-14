@@ -8,11 +8,16 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
-from split_csv_upload_tool import detect_date_from_name, run_pipeline
+from split_csv_upload_tool import (
+    detect_date_from_name,
+    run_pipeline,
+)
+from xhs_note_url_dom_updater import DEFAULT_PORT, DEFAULT_PROFILE_DIR, launch_browser, update_note_urls
 
 
 BASE_DIR = Path(__file__).resolve().parent
 AUTH_SCOPE = "space:document:retrieve sheets:spreadsheet:read sheets:spreadsheet:write_only"
+UPDATED_DIR_NAME = "地址已更新"
 
 
 def subprocess_no_window_kwargs() -> dict:
@@ -29,15 +34,18 @@ def subprocess_no_window_kwargs() -> dict:
 class CsvSplitUploadApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("xhs CSV 分片上传飞书")
-        self.root.geometry("900x680")
-        self.root.minsize(760, 560)
+        self.root.title("xhs CSV 筛选分片 / 飞书上传 / 笔记地址更新")
+        self.root.geometry("980x780")
+        self.root.minsize(860, 680)
 
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker: threading.Thread | None = None
         self.auth_worker: threading.Thread | None = None
+        self.xhs_worker: threading.Thread | None = None
+        self.update_stop_event = threading.Event()
 
         self.source_var = tk.StringVar()
+        self.update_target_var = tk.StringVar()
         self.output_root_var = tk.StringVar(value=str(BASE_DIR))
         self.date_var = tk.StringVar()
         self.chunk_size_var = tk.StringVar(value="200")
@@ -45,19 +53,20 @@ class CsvSplitUploadApp:
         self.upload_var = tk.BooleanVar(value=True)
         self.skip_existing_var = tk.BooleanVar(value=True)
         self.import_as_sheet_var = tk.BooleanVar(value=True)
+        self.update_interval_var = tk.StringVar(value="20")
 
         self._build_ui()
         self.root.after(150, self._drain_log_queue)
 
     def _build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(2, weight=1)
+        self.root.rowconfigure(3, weight=1)
 
         form = ttk.Frame(self.root, padding=16)
         form.grid(row=0, column=0, sticky="ew")
         form.columnconfigure(1, weight=1)
 
-        title = ttk.Label(form, text="xhs CSV 筛选、分片并上传飞书", font=("Microsoft YaHei UI", 15, "bold"))
+        title = ttk.Label(form, text="xhs CSV 处理工具", font=("Microsoft YaHei UI", 15, "bold"))
         title.grid(row=0, column=0, columnspan=3, sticky="w")
 
         ttk.Label(form, text="源 CSV").grid(row=1, column=0, sticky="w", pady=(16, 6))
@@ -68,7 +77,7 @@ class CsvSplitUploadApp:
         ttk.Entry(form, textvariable=self.output_root_var).grid(row=2, column=1, sticky="ew", padx=8, pady=6)
         ttk.Button(form, text="浏览", command=self._pick_output_root).grid(row=2, column=2, pady=6)
 
-        options = ttk.LabelFrame(self.root, text="规则", padding=16)
+        options = ttk.LabelFrame(self.root, text="筛选分片 / 飞书上传", padding=16)
         options.grid(row=1, column=0, sticky="ew", padx=16)
         options.columnconfigure(5, weight=1)
 
@@ -95,16 +104,72 @@ class CsvSplitUploadApp:
         )
         auth_hint.grid(row=3, column=1, columnspan=5, sticky="w", pady=(12, 0))
 
-        buttons = ttk.Frame(self.root, padding=(16, 12))
-        buttons.grid(row=3, column=0, sticky="ew")
-        buttons.columnconfigure(0, weight=1)
-        self.auth_button = ttk.Button(buttons, text="补充飞书读取授权", command=self._start_auth)
-        self.auth_button.grid(row=0, column=1, padx=(0, 10))
-        self.run_button = ttk.Button(buttons, text="开始处理", command=self._start)
-        self.run_button.grid(row=0, column=2)
+        upload_buttons = ttk.Frame(options)
+        upload_buttons.grid(row=4, column=1, columnspan=5, sticky="e", pady=(12, 0))
+        self.auth_button = ttk.Button(upload_buttons, text="补充飞书读取授权", command=self._start_auth)
+        self.auth_button.grid(row=0, column=0, padx=(0, 10))
+        self.run_button = ttk.Button(upload_buttons, text="开始筛选分片/上传", command=self._start)
+        self.run_button.grid(row=0, column=1)
+
+        xhs_tools = ttk.LabelFrame(self.root, text="XHS 笔记地址", padding=16)
+        xhs_tools.grid(row=2, column=0, sticky="ew", padx=16, pady=(12, 0))
+        xhs_tools.columnconfigure(1, weight=1)
+
+        self.open_xhs_button = ttk.Button(
+            xhs_tools,
+            text="打开/连接xhs浏览器",
+            command=self._open_xhs_browser,
+        )
+        self.open_xhs_button.grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            xhs_tools,
+            text="先登录打开的浏览器；更新分支可处理单个 CSV 或整个分片目录。",
+            foreground="gray",
+        ).grid(row=0, column=1, columnspan=4, sticky="w", padx=(12, 0))
+
+        ttk.Label(xhs_tools, text="更新目标").grid(row=1, column=0, sticky="w", pady=(12, 0))
+        ttk.Entry(xhs_tools, textvariable=self.update_target_var).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(8, 8),
+            pady=(12, 0),
+        )
+        self.pick_update_csv_button = ttk.Button(xhs_tools, text="选CSV", command=self._pick_update_csv)
+        self.pick_update_csv_button.grid(row=1, column=2, sticky="w", pady=(12, 0))
+        self.pick_update_folder_button = ttk.Button(xhs_tools, text="选文件夹", command=self._pick_update_folder)
+        self.pick_update_folder_button.grid(row=1, column=3, sticky="w", padx=(8, 0), pady=(12, 0))
+        self.update_note_url_button = ttk.Button(
+            xhs_tools,
+            text="更新笔记官方地址",
+            command=self._update_note_urls,
+        )
+        self.update_note_url_button.grid(row=1, column=4, sticky="w", padx=(8, 0), pady=(12, 0))
+
+        ttk.Label(xhs_tools, text="每条间隔秒数").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(xhs_tools, textvariable=self.update_interval_var, width=8).grid(
+            row=2,
+            column=1,
+            sticky="w",
+            padx=(8, 0),
+            pady=(10, 0),
+        )
+        self.stop_update_button = ttk.Button(
+            xhs_tools,
+            text="停止更新",
+            command=self._stop_update_note_urls,
+            state="disabled",
+        )
+        self.stop_update_button.grid(row=2, column=4, sticky="w", padx=(8, 0), pady=(10, 0))
+        ttk.Label(
+            xhs_tools,
+            text=f"更新结果写入 {UPDATED_DIR_NAME} 子目录；不会上传飞书，也不会覆盖原分片。",
+            foreground="gray",
+            wraplength=360,
+        ).grid(row=3, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(8, 0))
 
         self.log_text = ScrolledText(self.root, height=18, font=("Consolas", 10))
-        self.log_text.grid(row=2, column=0, sticky="nsew", padx=16, pady=(12, 0))
+        self.log_text.grid(row=3, column=0, sticky="nsew", padx=16, pady=(12, 0))
 
     def _pick_source(self) -> None:
         path = filedialog.askopenfilename(
@@ -125,6 +190,20 @@ class CsvSplitUploadApp:
         path = filedialog.askdirectory(title="选择输出根目录", initialdir=self.output_root_var.get() or str(BASE_DIR))
         if path:
             self.output_root_var.set(path)
+
+    def _pick_update_csv(self) -> None:
+        path = filedialog.askopenfilename(
+            title="选择要更新的分片 CSV",
+            initialdir=str(BASE_DIR),
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if path:
+            self.update_target_var.set(path)
+
+    def _pick_update_folder(self) -> None:
+        path = filedialog.askdirectory(title="选择包含分片 CSV 的文件夹", initialdir=self.output_root_var.get() or str(BASE_DIR))
+        if path:
+            self.update_target_var.set(path)
 
     def _append_log(self, message: str) -> None:
         self.log_text.insert("end", message + "\n")
@@ -178,6 +257,171 @@ class CsvSplitUploadApp:
             self.import_as_sheet_var.get(),
         )
 
+    def _validate_update_targets(self) -> list[Path] | None:
+        target_text = self.update_target_var.get().strip()
+        if not target_text:
+            messagebox.showerror("缺少更新目标", "请选择要更新的单个 CSV，或包含分片 CSV 的文件夹。")
+            return None
+
+        target = Path(target_text)
+        if not target.exists():
+            messagebox.showerror("更新目标不存在", str(target))
+            return None
+
+        if target.is_file():
+            if target.suffix.lower() != ".csv":
+                messagebox.showerror("文件类型错误", "请选择 CSV 文件。")
+                return None
+            if not self._is_update_csv_candidate(target):
+                messagebox.showerror("文件不可更新", "请选择原始分片 CSV，不要选择跟踪、失败、筛选结果或已更新产物。")
+                return None
+            return [target]
+
+        csv_files = [path for path in sorted(target.glob("*.csv")) if self._is_update_csv_candidate(path)]
+        if not csv_files:
+            messagebox.showerror("没有可更新的 CSV", "该文件夹下没有可处理的分片 CSV。")
+            return None
+        return csv_files
+
+    def _validate_update_interval(self) -> int | None:
+        interval_text = self.update_interval_var.get().strip()
+        try:
+            interval_sec = int(interval_text)
+        except ValueError:
+            messagebox.showerror("间隔格式错误", "每条间隔秒数必须是整数。")
+            return None
+        if interval_sec < 0:
+            messagebox.showerror("间隔格式错误", "每条间隔秒数不能小于 0。")
+            return None
+        return interval_sec
+
+    def _is_update_csv_candidate(self, path: Path) -> bool:
+        name = path.name
+        if not name.lower().endswith(".csv"):
+            return False
+        if UPDATED_DIR_NAME in path.parts:
+            return False
+        excluded_keywords = ("上传跟踪_", "失败数据", "筛选结果", "笔记地址已更新")
+        return not any(keyword in name for keyword in excluded_keywords)
+
+    def _updated_output_path_for(self, source: Path) -> Path:
+        return source.parent / UPDATED_DIR_NAME / source.name
+
+    def _is_processing(self) -> bool:
+        return bool(
+            (self.worker and self.worker.is_alive())
+            or (self.xhs_worker and self.xhs_worker.is_alive())
+        )
+
+    def _set_xhs_buttons_state(self, state: str) -> None:
+        self.open_xhs_button.configure(state=state)
+        self.pick_update_csv_button.configure(state=state)
+        self.pick_update_folder_button.configure(state=state)
+        self.update_note_url_button.configure(state=state)
+        self.stop_update_button.configure(state="disabled")
+
+    def _stop_update_note_urls(self) -> None:
+        if not (self.xhs_worker and self.xhs_worker.is_alive()):
+            return
+        self.update_stop_event.set()
+        self.stop_update_button.configure(state="disabled")
+        self._append_log("已请求停止更新；当前正在处理的页面结束后会保存已完成数据。")
+
+    def _open_xhs_browser(self) -> None:
+        if self._is_processing():
+            messagebox.showinfo("正在运行", "当前任务还在执行。")
+            return
+
+        self._set_xhs_buttons_state("disabled")
+        self._append_log("")
+        self._append_log("打开/连接 xhs 浏览器...")
+
+        def worker() -> None:
+            try:
+                launch_browser(DEFAULT_PORT, DEFAULT_PROFILE_DIR, logger=self._logger)
+                self._logger("请在打开的浏览器中登录 xhs；登录后可回到 GUI 执行更新。")
+                self.root.after(0, lambda: messagebox.showinfo("浏览器已就绪", "请在打开的浏览器中登录 xhs。"))
+            except Exception as exc:
+                error_message = str(exc)
+                self._logger(f"ERROR: {error_message}")
+                self.root.after(0, lambda: messagebox.showerror("打开浏览器失败", error_message))
+            finally:
+                self.root.after(0, lambda: self._set_xhs_buttons_state("normal"))
+
+        self.xhs_worker = threading.Thread(target=worker, daemon=True)
+        self.xhs_worker.start()
+
+    def _update_note_urls(self) -> None:
+        targets = self._validate_update_targets()
+        if targets is None:
+            return
+        interval_sec = self._validate_update_interval()
+        if interval_sec is None:
+            return
+
+        if self._is_processing():
+            messagebox.showinfo("正在运行", "当前任务还在执行。")
+            return
+
+        self.update_stop_event.clear()
+        self._set_xhs_buttons_state("disabled")
+        self.stop_update_button.configure(state="normal")
+        self.run_button.configure(state="disabled")
+        self._append_log("")
+        self._append_log("开始更新笔记官方地址...")
+
+        def worker() -> None:
+            try:
+                failed_files = []
+                output_files = []
+                for index, target in enumerate(targets, start=1):
+                    self._logger(f"开始更新 CSV {index}/{len(targets)}: {target}")
+                    output_csv = self._updated_output_path_for(target)
+                    self._logger(f"更新结果输出到: {output_csv}")
+                    saved_csv, failed_csv = update_note_urls(
+                        source=target,
+                        output=output_csv,
+                        port=DEFAULT_PORT,
+                        profile_dir=DEFAULT_PROFILE_DIR,
+                        skip_existing_xsec=True,
+                        interval_sec=interval_sec,
+                        max_scrolls=12,
+                        logger=self._logger,
+                        stop_event=self.update_stop_event,
+                    )
+                    output_files.append(saved_csv)
+                    if failed_csv:
+                        failed_files.append(failed_csv)
+                    if self.update_stop_event.is_set():
+                        self._logger("停止请求已生效，不再处理后续 CSV。")
+                        break
+
+                output_dir = output_files[0].parent if output_files else targets[0].parent / UPDATED_DIR_NAME
+                self.root.after(0, lambda path=output_dir: self.update_target_var.set(str(path)))
+                processed_count = len(output_files)
+                status_text = "已停止" if self.update_stop_event.is_set() else "更新完成"
+                self._logger(f"{status_text}，共处理 {processed_count}/{len(targets)} 个 CSV。")
+                self._logger(f"更新结果目录: {output_dir}")
+                for failed_csv in failed_files:
+                    self._logger(f"失败数据 CSV: {failed_csv}")
+                self.root.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        status_text,
+                        f"已处理 {processed_count}/{len(targets)} 个 CSV。\n\n更新结果目录:\n{output_dir}",
+                    ),
+                )
+            except Exception as exc:
+                error_message = str(exc)
+                self._logger(f"ERROR: {error_message}")
+                self.root.after(0, lambda: messagebox.showerror("更新失败", error_message))
+            finally:
+                self.root.after(0, lambda: self._set_xhs_buttons_state("normal"))
+                self.root.after(0, lambda: self.run_button.configure(state="normal"))
+
+        self.xhs_worker = threading.Thread(target=worker, daemon=True)
+        self.xhs_worker.start()
+
     def _start_auth(self) -> None:
         if self.auth_worker and self.auth_worker.is_alive():
             messagebox.showinfo("正在授权", "飞书授权任务还在执行。")
@@ -230,11 +474,12 @@ class CsvSplitUploadApp:
         if params is None:
             return
 
-        if self.worker and self.worker.is_alive():
+        if self._is_processing():
             messagebox.showinfo("正在运行", "当前任务还在执行。")
             return
 
         self.run_button.configure(state="disabled")
+        self._set_xhs_buttons_state("disabled")
         self._append_log("")
         self._append_log("开始处理...")
 
@@ -255,6 +500,7 @@ class CsvSplitUploadApp:
                 self._logger(f"任务完成，本地目录: {output_dir}")
                 self._logger(f"跟踪清单: {tracking_csv}")
                 self._logger(f"跟踪文档: {tracking_md}")
+                self.root.after(0, lambda path=output_dir: self.update_target_var.set(str(path)))
                 self.root.after(0, lambda: messagebox.showinfo("完成", f"任务完成。\n\n输出目录:\n{output_dir}"))
             except Exception as exc:
                 error_message = str(exc)
@@ -262,6 +508,7 @@ class CsvSplitUploadApp:
                 self.root.after(0, lambda: messagebox.showerror("处理失败", error_message))
             finally:
                 self.root.after(0, lambda: self.run_button.configure(state="normal"))
+                self.root.after(0, lambda: self._set_xhs_buttons_state("normal"))
 
         self.worker = threading.Thread(target=worker, daemon=True)
         self.worker.start()
