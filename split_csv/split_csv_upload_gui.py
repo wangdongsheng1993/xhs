@@ -148,7 +148,7 @@ class CsvSplitUploadApp:
         )
         self.update_note_url_button.grid(row=1, column=4, sticky="w", padx=(8, 0), pady=(12, 0))
 
-        ttk.Label(xhs_tools, text="每条间隔秒数").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(xhs_tools, text="基础间隔秒数").grid(row=2, column=0, sticky="w", pady=(10, 0))
         ttk.Entry(xhs_tools, textvariable=self.update_interval_var, width=8).grid(
             row=2,
             column=1,
@@ -165,7 +165,12 @@ class CsvSplitUploadApp:
         self.stop_update_button.grid(row=2, column=4, sticky="w", padx=(8, 0), pady=(10, 0))
         ttk.Label(
             xhs_tools,
-            text=f"更新结果写入 {UPDATED_DIR_NAME} 子目录；不会上传飞书，也不会覆盖原分片。",
+            text=(
+                f"更新结果写入 {UPDATED_DIR_NAME} 子目录；若已存在同名更新结果，会按最后一个有效 token 的下一行续跑，"
+                "不会回头补之前失败行；"
+                "主页访问会按基础间隔到 +20 秒随机等待；遇到登录/验证码页或请求频繁页时，会停在当前条最多等待 5 分钟，"
+                "你处理完成并恢复到笔记卡片页面后继续，超时才记失败。"
+            ),
             foreground="gray",
             wraplength=360,
         ).grid(row=3, column=1, columnspan=4, sticky="w", padx=(8, 0), pady=(8, 0))
@@ -290,10 +295,10 @@ class CsvSplitUploadApp:
         try:
             interval_sec = int(interval_text)
         except ValueError:
-            messagebox.showerror("间隔格式错误", "每条间隔秒数必须是整数。")
+            messagebox.showerror("间隔格式错误", "基础间隔秒数必须是整数。")
             return None
         if interval_sec < 0:
-            messagebox.showerror("间隔格式错误", "每条间隔秒数不能小于 0。")
+            messagebox.showerror("间隔格式错误", "基础间隔秒数不能小于 0。")
             return None
         return interval_sec
 
@@ -382,6 +387,8 @@ class CsvSplitUploadApp:
                     self._logger(f"开始更新 CSV {index}/{len(targets)}: {target}")
                     output_csv = self._updated_output_path_for(target)
                     self._logger(f"更新结果输出到: {output_csv}")
+                    if output_csv.exists():
+                        self._logger("检测到同名更新结果，自动续跑未完成部分。")
                     saved_csv, failed_csv = update_note_urls(
                         source=target,
                         output=output_csv,
@@ -389,7 +396,7 @@ class CsvSplitUploadApp:
                         profile_dir=DEFAULT_PROFILE_DIR,
                         skip_existing_xsec=True,
                         interval_sec=interval_sec,
-                        max_scrolls=12,
+                        max_scrolls=0,
                         logger=self._logger,
                         stop_event=self.update_stop_event,
                     )
