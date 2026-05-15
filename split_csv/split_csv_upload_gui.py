@@ -45,6 +45,7 @@ class CsvSplitUploadApp:
         self.auth_worker: threading.Thread | None = None
         self.xhs_worker: threading.Thread | None = None
         self.update_stop_event = threading.Event()
+        self.update_continue_event = threading.Event()
 
         self.source_var = tk.StringVar()
         self.update_target_var = tk.StringVar()
@@ -162,14 +163,21 @@ class CsvSplitUploadApp:
             command=self._stop_update_note_urls,
             state="disabled",
         )
-        self.stop_update_button.grid(row=2, column=4, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.stop_update_button.grid(row=2, column=3, sticky="w", padx=(8, 0), pady=(10, 0))
+        self.continue_update_button = ttk.Button(
+            xhs_tools,
+            text="继续当前条",
+            command=self._continue_current_note_url,
+            state="disabled",
+        )
+        self.continue_update_button.grid(row=2, column=4, sticky="w", padx=(8, 0), pady=(10, 0))
         ttk.Label(
             xhs_tools,
             text=(
                 f"更新结果写入 {UPDATED_DIR_NAME} 子目录；若已存在同名更新结果，会按最后一个有效 token 的下一行续跑，"
                 "不会回头补之前失败行；"
-                "主页访问会按基础间隔到 +20 秒随机等待；遇到登录/验证码页或请求频繁页时，会停在当前条最多等待 5 分钟，"
-                "你处理完成并恢复到笔记卡片页面后继续，超时才记失败。"
+                "主页访问会按基础间隔到 +20 秒随机等待；遇到登录/验证码页或请求频繁页时，会静默挂起当前条，"
+                "不会再自动访问页面；你处理完成后点击“继续当前条”，超时才记失败。"
             ),
             foreground="gray",
             wraplength=360,
@@ -326,13 +334,22 @@ class CsvSplitUploadApp:
         self.pick_update_folder_button.configure(state=state)
         self.update_note_url_button.configure(state=state)
         self.stop_update_button.configure(state="disabled")
+        self.continue_update_button.configure(state="disabled")
 
     def _stop_update_note_urls(self) -> None:
         if not (self.xhs_worker and self.xhs_worker.is_alive()):
             return
         self.update_stop_event.set()
         self.stop_update_button.configure(state="disabled")
+        self.continue_update_button.configure(state="disabled")
         self._append_log("已请求停止更新；当前正在处理的页面结束后会保存已完成数据。")
+
+    def _continue_current_note_url(self) -> None:
+        if not (self.xhs_worker and self.xhs_worker.is_alive()):
+            return
+        self.update_continue_event.set()
+        self.continue_update_button.configure(state="disabled")
+        self._append_log("已请求继续当前条；脚本将基于当前浏览器页面状态恢复处理。")
 
     def _open_xhs_browser(self) -> None:
         if self._is_processing():
@@ -371,8 +388,10 @@ class CsvSplitUploadApp:
             return
 
         self.update_stop_event.clear()
+        self.update_continue_event.clear()
         self._set_xhs_buttons_state("disabled")
         self.stop_update_button.configure(state="normal")
+        self.continue_update_button.configure(state="normal")
         self.run_button.configure(state="disabled")
         self._append_log("")
         self._append_log("开始更新笔记官方地址...")
@@ -399,6 +418,7 @@ class CsvSplitUploadApp:
                         max_scrolls=0,
                         logger=self._logger,
                         stop_event=self.update_stop_event,
+                        continue_event=self.update_continue_event,
                     )
                     output_files.append(saved_csv)
                     if failed_csv:
@@ -431,6 +451,8 @@ class CsvSplitUploadApp:
             finally:
                 self.root.after(0, lambda: self._set_xhs_buttons_state("normal"))
                 self.root.after(0, lambda: self.run_button.configure(state="normal"))
+                self.root.after(0, lambda: self.stop_update_button.configure(state="disabled"))
+                self.root.after(0, lambda: self.continue_update_button.configure(state="disabled"))
 
         self.xhs_worker = threading.Thread(target=worker, daemon=True)
         self.xhs_worker.start()

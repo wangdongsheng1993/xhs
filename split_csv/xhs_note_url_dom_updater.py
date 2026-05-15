@@ -27,6 +27,9 @@ HOMEPAGE_HEADER = "主页链接"
 NO_TITLE_VALUE = "笔记暂未设置标题"
 INTERVAL_JITTER_SEC = 20
 MANUAL_RECOVERY_TIMEOUT_SEC = 300
+SAVE_RETRY_TIMEOUT_SEC = 60
+SAVE_RETRY_INTERVAL_SEC = 1
+POST_RESUME_RECOVERY_TIMEOUT_SEC = 10
 
 
 def log(message: str) -> None:
@@ -142,6 +145,35 @@ def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) -> 
         writer = csv.DictWriter(file, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def write_csv_with_retry(
+    path: Path,
+    fieldnames: list[str],
+    rows: list[dict[str, str]],
+    logger: Callable[[str], None],
+    description: str,
+    timeout_sec: int = SAVE_RETRY_TIMEOUT_SEC,
+    stop_event: Event | None = None,
+) -> None:
+    deadline = time.time() + max(1, timeout_sec)
+    prompted = False
+    while True:
+        try:
+            write_csv(path, fieldnames, rows)
+            if prompted:
+                logger(f"{description}已保存: {path}")
+            return
+        except PermissionError as exc:
+            if not prompted:
+                logger(f"{description}正在被其他程序占用，请关闭后重试保存: {path}")
+                logger(f"将在 {format_duration(timeout_sec)} 内自动重试保存原文件。")
+                prompted = True
+            if stop_event and stop_event.is_set():
+                raise RuntimeError(f"{description}保存已停止，文件仍被占用: {path}") from exc
+            if time.time() >= deadline:
+                raise RuntimeError(f"{description}保存失败，文件可能仍被占用: {path}") from exc
+            time.sleep(SAVE_RETRY_INTERVAL_SEC)
 
 
 def output_path_for(source: Path) -> Path:
@@ -280,23 +312,38 @@ def wait_for_notes_dom_ready(page, timeout_ms: int = 15000) -> bool:
 
 
 def wait_for_manual_recovery(
-    page,
     timeout_sec: int,
     stop_event: Event | None,
+    continue_event: Event | None,
     logger: Callable[[str], None],
     wait_reason: str,
 ) -> str:
+    if continue_event:
+        continue_event.clear()
     logger(f"  - {wait_reason}")
-    logger(f"  - 将在当前页等待最多 {format_duration(timeout_sec)}，恢复到笔记卡片页面后继续当前条。")
+    logger(f"  - 当前条已静默挂起；不会再自动访问页面。请处理完成后点击“继续当前条”。")
+    logger(f"  - 最多等待 {format_duration(timeout_sec)}；若需放弃可点“停止更新”。")
     deadline = time.time() + max(0, timeout_sec)
     while time.time() < deadline:
         if stop_event and stop_event.is_set():
             return "stopped"
-        gate_status, _ = detect_page_gate_status(page)
-        if gate_status == "none" and wait_for_notes_dom_ready(page, timeout_ms=1200):
-            return "recovered"
-        time.sleep(1)
+        if continue_event and continue_event.is_set():
+            continue_event.clear()
+            return "resume_requested"
+        time.sleep(0.2)
     return "timeout"
+
+
+def wait_for_page_recovery_after_resume(page, timeout_sec: int = POST_RESUME_RECOVERY_TIMEOUT_SEC) -> tuple[bool, str, str]:
+    deadline = time.time() + max(1, timeout_sec)
+    last_status = "none"
+    last_keyword = ""
+    while time.time() < deadline:
+        last_status, last_keyword = detect_page_gate_status(page)
+        if last_status == "none" and wait_for_notes_dom_ready(page, timeout_ms=1200):
+            return True, last_status, last_keyword
+        time.sleep(0.5)
+    return False, last_status, last_keyword
 
 
 def build_standard_note_url(href: str) -> str:
@@ -475,6 +522,7 @@ def update_note_urls(
     max_scrolls: int,
     logger: Callable[[str], None] = log,
     stop_event: Event | None = None,
+    continue_event: Event | None = None,
 ) -> tuple[Path, Path | None]:
     source = source.resolve()
     if not source.exists():
@@ -502,7 +550,7 @@ def update_note_urls(
         completed_count, failed_before_anchor_count, pending_count = summarize_resume_state(rows, resume_anchor)
         if resume_anchor > 0:
             logger("检测到已有更新结果，将从最后一个有效 xsec_token 的下一行继续。")
-            logger(f"恢复锚点: 第 {resume_anchor + 2} 行；本次从第 {resume_anchor + 3} 行开始。")
+            logger(f"恢复锚点: 第 {resume_anchor + 1} 行；本次从第 {resume_anchor + 2} 行开始。")
         else:
             logger("检测到已有更新结果，但未检测到有效 xsec_token，将从首条开始处理。")
         logger(
@@ -553,30 +601,41 @@ def update_note_urls(
                     if gate_keyword:
                         logger(f"  - 命中页面提示: {gate_keyword}")
                     recovery = wait_for_manual_recovery(
-                        page,
                         timeout_sec=MANUAL_RECOVERY_TIMEOUT_SEC,
                         stop_event=stop_event,
+                        continue_event=continue_event,
                         logger=logger,
-                        wait_reason="检测到请求过于频繁页面，请手动刷新或等待恢复。",
+                        wait_reason="检测到请求过于频繁页面，请先手动处理页面。",
                     )
                     if recovery == "stopped":
                         stopped = True
                         logger("人工恢复等待期间收到停止请求，保存已处理数据后退出。")
                         break
-                    if recovery == "timeout":
+                    if recovery == "resume_requested":
+                        logger("  - 已收到继续指令，等待页面恢复。")
+                        recovered, gate_status, gate_keyword = wait_for_page_recovery_after_resume(page)
+                        if not recovered:
+                            reason = "手动继续后页面仍未恢复到笔记卡片"
+                            failed += 1
+                            failed_rows.append(build_failed_row(index, title, homepage, old_url, reason))
+                            if gate_keyword:
+                                logger(f"  - 页面仍命中提示: {gate_keyword}")
+                            logger(f"  - 失败: {reason}")
+                            continue
+                        logger("  - 页面已恢复，继续处理当前条。")
+                    else:
                         reason = "请求过于频繁页面等待超时"
                         failed += 1
                         failed_rows.append(build_failed_row(index, title, homepage, old_url, reason))
                         logger(f"  - 失败: {reason}")
                         continue
-                    logger("  - 页面已恢复，继续处理当前条。")
                 elif gate_status == "login_or_verify":
                     if gate_keyword:
                         logger(f"  - 命中页面提示: {gate_keyword}")
                     recovery = wait_for_manual_recovery(
-                        page,
                         timeout_sec=MANUAL_RECOVERY_TIMEOUT_SEC,
                         stop_event=stop_event,
+                        continue_event=continue_event,
                         logger=logger,
                         wait_reason="检测到登录/验证页面，请先扫码登录或完成验证。",
                     )
@@ -584,13 +643,24 @@ def update_note_urls(
                         stopped = True
                         logger("人工恢复等待期间收到停止请求，保存已处理数据后退出。")
                         break
-                    if recovery == "timeout":
+                    if recovery == "resume_requested":
+                        logger("  - 已收到继续指令，等待页面恢复。")
+                        recovered, gate_status, gate_keyword = wait_for_page_recovery_after_resume(page)
+                        if not recovered:
+                            reason = "手动继续后页面仍停留在登录/验证状态"
+                            failed += 1
+                            failed_rows.append(build_failed_row(index, title, homepage, old_url, reason))
+                            if gate_keyword:
+                                logger(f"  - 页面仍命中提示: {gate_keyword}")
+                            logger(f"  - 失败: {reason}")
+                            continue
+                        logger("  - 页面已恢复，继续处理当前条。")
+                    else:
                         reason = "登录/验证页面等待超时"
                         failed += 1
                         failed_rows.append(build_failed_row(index, title, homepage, old_url, reason))
                         logger(f"  - 失败: {reason}")
                         continue
-                    logger("  - 页面已恢复，继续处理当前条。")
                 if not wait_for_notes_dom_ready(page, timeout_ms=15000):
                     reason = "笔记卡片 DOM 未就绪"
                     failed += 1
@@ -617,17 +687,15 @@ def update_note_urls(
         browser.close()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_csv(output_path, fieldnames, rows)
+    write_csv_with_retry(output_path, fieldnames, rows, logger, "更新后 CSV", stop_event=stop_event)
     logger(f"已保存更新后 CSV: {output_path}")
     logger(f"OUTPUT_CSV: {output_path}")
 
     actual_failed_path = None
     if failed_rows:
         failed_path.parent.mkdir(parents=True, exist_ok=True)
-        with failed_path.open("w", encoding="utf-8-sig", newline="") as file:
-            writer = csv.DictWriter(file, fieldnames=["行号", "笔记标题", "主页链接", "原笔记地址", "失败原因"])
-            writer.writeheader()
-            writer.writerows(failed_rows)
+        failed_fieldnames = ["行号", "笔记标题", "主页链接", "原笔记地址", "失败原因"]
+        write_csv_with_retry(failed_path, failed_fieldnames, failed_rows, logger, "失败数据 CSV", stop_event=stop_event)
         actual_failed_path = failed_path
         logger(f"失败数据: {failed_path}")
         logger(f"FAILED_CSV: {failed_path}")
