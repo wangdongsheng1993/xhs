@@ -1,4 +1,4 @@
-分片名称,本地路径,行数,sha256,飞书地址,飞书文件token,上传状态,备注
-油烟机_20260515_01.csv,C:\code_20251212\AI\xhs\split_csv\油烟机\20260514\油烟机_20260515_01.csv,200,60c7a2c5bd4d92ee617df910ac71896f11a010a292927270be8845002f02f34f,https://my.feishu.cn/sheets/PFnVs1GIBhhlXFt3OVpcB4hwndo,PFnVs1GIBhhlXFt3OVpcB4hwndo,已导入为电子表格,小楠爱帮忙
-油烟机_20260515_02.csv,C:\code_20251212\AI\xhs\split_csv\油烟机\20260514\油烟机_20260515_02.csv,200,442c089185a89d430697af273c390276fdcc2af5f503db837161424e8fc7a593,https://my.feishu.cn/sheets/U2Yps3pYIhWieqt0M1ScsG4vnen,U2Yps3pYIhWieqt0M1ScsG4vnen,已导入为电子表格,
-油烟机_20260515_03.csv,C:\code_20251212\AI\xhs\split_csv\油烟机\20260514\油烟机_20260515_03.csv,249,fffb69f2337061110d500d37b80ef91d21cbe39d0a4380c5650d29bdb87f1441,https://my.feishu.cn/sheets/Cbifs22nyhvDfatY3BjcB0XEnRd,Cbifs22nyhvDfatY3BjcB0XEnRd,已导入为电子表格,
+分片名称,本地路径,行数,sha256,飞书地址,飞书文件token,上传状态,备注,
+油烟机_20260515_01.csv,C:\code_20251212\AI\xhs\split_csv\油烟机\20260514\油烟机_20260515_01.csv,200,60c7a2c5bd4d92ee617df910ac71896f11a010a292927270be8845002f02f34f,https://my.feishu.cn/sheets/PFnVs1GIBhhlXFt3OVpcB4hwndo,PFnVs1GIBhhlXFt3OVpcB4hwndo,已导入为电子表格,小楠爱帮忙,
+油烟机_20260515_02.csv,C:\code_20251212\AI\xhs\split_csv\油烟机\20260514\油烟机_20260515_02.csv,200,442c089185a89d430697af273c390276fdcc2af5f503db837161424e8fc7a593,https://my.feishu.cn/sheets/U2Yps3pYIhWieqt0M1ScsG4vnen,U2Yps3pYIhWieqt0M1ScsG4vnen,已导入为电子表格,Aurora,
+油烟机_20260515_03.csv,C:\code_20251212\AI\xhs\split_csv\油烟机\20260514\油烟机_20260515_03.csv,249,fffb69f2337061110d500d37b80ef91d21cbe39d0a4380c5650d29bdb87f1441,https://my.feishu.cn/sheets/Cbifs22nyhvDfatY3BjcB0XEnRd,Cbifs22nyhvDfatY3BjcB0XEnRd,已导入为电子表格,Aurora,1
