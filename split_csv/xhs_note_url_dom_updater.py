@@ -30,6 +30,17 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
+def format_duration(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds)))
+    minutes, secs = divmod(total_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}小时{minutes}分{secs}秒"
+    if minutes:
+        return f"{minutes}分{secs}秒"
+    return f"{secs}秒"
+
+
 def normalize_text(value: str) -> str:
     text = str(value or "").strip().lower()
     return re.sub(r"[\s\u200b\u200c\u200d\ufeff]+", "", text)
@@ -329,6 +340,7 @@ def update_note_urls(
     failed = 0
     processed_homepages = 0
     stopped = False
+    total_started_at = time.monotonic()
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.connect_over_cdp(endpoint)
@@ -366,6 +378,7 @@ def update_note_urls(
             processed_homepages += 1
 
             logger(f"[{index - 1}/{len(rows)}] 第 {index} 行: {title[:60]}")
+            row_started_at = time.monotonic()
             try:
                 page.goto(normalize_url(homepage), wait_until="domcontentloaded", timeout=45000)
                 page.wait_for_timeout(1800)
@@ -394,6 +407,8 @@ def update_note_urls(
                 reason = f"处理异常: {exc}"
                 failed_rows.append(build_failed_row(index, title, homepage, old_url, reason))
                 logger(f"  - 失败: {reason}")
+            finally:
+                logger(f"  - 本条耗时: {format_duration(time.monotonic() - row_started_at)}")
 
         browser.close()
 
@@ -413,9 +428,9 @@ def update_note_urls(
         logger(f"FAILED_CSV: {failed_path}")
 
     if stopped:
-        logger(f"已停止: 更新={updated}, 跳过={skipped}, 失败={failed}")
+        logger(f"已停止: 更新={updated}, 跳过={skipped}, 失败={failed}, 总耗时={format_duration(time.monotonic() - total_started_at)}")
     else:
-        logger(f"完成: 更新={updated}, 跳过={skipped}, 失败={failed}")
+        logger(f"完成: 更新={updated}, 跳过={skipped}, 失败={failed}, 总耗时={format_duration(time.monotonic() - total_started_at)}")
     return output_path, actual_failed_path
 
 

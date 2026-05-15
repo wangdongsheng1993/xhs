@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import os
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -13,6 +14,7 @@ from split_csv_upload_tool import (
     run_pipeline,
 )
 from xhs_note_url_dom_updater import DEFAULT_PORT, DEFAULT_PROFILE_DIR, launch_browser, update_note_urls
+from xhs_note_url_dom_updater import format_duration
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -372,9 +374,11 @@ class CsvSplitUploadApp:
 
         def worker() -> None:
             try:
+                batch_started_at = time.monotonic()
                 failed_files = []
                 output_files = []
                 for index, target in enumerate(targets, start=1):
+                    csv_started_at = time.monotonic()
                     self._logger(f"开始更新 CSV {index}/{len(targets)}: {target}")
                     output_csv = self._updated_output_path_for(target)
                     self._logger(f"更新结果输出到: {output_csv}")
@@ -392,6 +396,7 @@ class CsvSplitUploadApp:
                     output_files.append(saved_csv)
                     if failed_csv:
                         failed_files.append(failed_csv)
+                    self._logger(f"CSV {index}/{len(targets)} 耗时: {format_duration(time.monotonic() - csv_started_at)}")
                     if self.update_stop_event.is_set():
                         self._logger("停止请求已生效，不再处理后续 CSV。")
                         break
@@ -400,7 +405,8 @@ class CsvSplitUploadApp:
                 self.root.after(0, lambda path=output_dir: self.update_target_var.set(str(path)))
                 processed_count = len(output_files)
                 status_text = "已停止" if self.update_stop_event.is_set() else "更新完成"
-                self._logger(f"{status_text}，共处理 {processed_count}/{len(targets)} 个 CSV。")
+                batch_duration = format_duration(time.monotonic() - batch_started_at)
+                self._logger(f"{status_text}，共处理 {processed_count}/{len(targets)} 个 CSV，总耗时: {batch_duration}。")
                 self._logger(f"更新结果目录: {output_dir}")
                 for failed_csv in failed_files:
                     self._logger(f"失败数据 CSV: {failed_csv}")
@@ -408,7 +414,7 @@ class CsvSplitUploadApp:
                     0,
                     lambda: messagebox.showinfo(
                         status_text,
-                        f"已处理 {processed_count}/{len(targets)} 个 CSV。\n\n更新结果目录:\n{output_dir}",
+                        f"已处理 {processed_count}/{len(targets)} 个 CSV。\n总耗时: {batch_duration}\n\n更新结果目录:\n{output_dir}",
                     ),
                 )
             except Exception as exc:
